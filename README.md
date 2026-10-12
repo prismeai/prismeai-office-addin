@@ -467,9 +467,9 @@ on the Prisme.ai instance. It holds the tool catalog, checks the caller, and
 relays each call to the user's task pane, which executes it through Office.js on
 the open document. Nothing is read or written through Microsoft Graph.
 
-`office-mcp` is maintained in the Prisme.ai workspaces repository
-(`workspaces/office-mcp`), not in this one. It follows the same relay design as
-`browser-mcp`, the workspace behind the browser extension.
+`office-mcp` is a regular Prisme.ai workspace: it is imported, configured and
+updated like any other. It is maintained in the Prisme.ai workspaces repository
+(`workspaces/office-mcp`), not in this one.
 
 To enable the tools:
 
