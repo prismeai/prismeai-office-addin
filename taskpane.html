@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prisme.ai</title>
+    <!-- Office.js must be loaded from Microsoft's CDN (store requirement). -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <style>
+      :root {
+        --primary: 217 91% 60%;
+        --foreground: 240 10% 4%;
+        --muted-foreground: 220 9% 46%;
+        --border: 220 13% 91%;
+        font-family: Satoshi, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        color: hsl(var(--foreground));
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body { display: flex; flex-direction: column; }
+
+      /* ── Connect screen ─────────────────────────────────────────────── */
+      #config { flex: 1; overflow: auto; padding: 20px 16px;
+        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 55%, #1e293b 100%); }
+      #config.hidden { display: none; }
+      .card { background: #fff; border-radius: 16px; padding: 22px 20px;
+        box-shadow: 0 25px 50px -12px rgba(0,0,0,.35); }
+      .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 18px;
+        font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+        color: hsl(var(--muted-foreground)); }
+      .brand-mark { width: 20px; height: 20px; border-radius: 5px;
+        background: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%); }
+      .title { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
+      .subtitle { margin: 0 0 18px; font-size: .8125rem; line-height: 1.45; color: hsl(var(--muted-foreground)); }
+      .label { display: block; margin: 12px 0 6px; font-size: .8125rem; font-weight: 500; }
+      .input { width: 100%; height: 36px; padding: 0 12px; font-size: .8125rem; font-family: inherit;
+        color: hsl(var(--foreground)); background: #fff; border: 1px solid hsl(var(--border));
+        border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.05); outline: none;
+        transition: border-color .15s, box-shadow .15s; }
+      .input:focus { border-color: hsl(var(--primary)); box-shadow: 0 0 0 3px hsl(var(--primary) / .25); }
+      .input:disabled { background: hsl(var(--border) / .4); color: hsl(var(--muted-foreground)); }
+      .btn { width: 100%; margin-top: 20px; height: 38px; font-size: .875rem; font-weight: 600;
+        font-family: inherit; color: #fff; background: hsl(var(--primary)); border: none;
+        border-radius: 8px; cursor: pointer; transition: background .15s; }
+      .btn:hover { background: hsl(217 91% 55%); }
+      details { margin-top: 14px; }
+      summary { cursor: pointer; font-size: .75rem; color: hsl(var(--muted-foreground)); }
+      .error { margin: 12px 0 0; font-size: .8125rem; color: #dc2626; }
+      .error:empty { display: none; }
+      #sso-fields.hidden { display: none; }
+
+      /* ── Chat screen ────────────────────────────────────────────────── */
+      #frame { flex: 1; border: 0; width: 100%; }
+      #frame.hidden { display: none; }
+      .float { position: fixed; top: 8px; z-index: 5; display: inline-flex; align-items: center;
+        justify-content: center; width: 28px; height: 28px; border: 0; border-radius: 8px;
+        background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; opacity: .7; }
+      .float:hover { opacity: 1; background: hsl(var(--border) / .5); }
+      .float.hidden { display: none; }
+      #quote { right: 76px; }
+      #newchat { right: 42px; }
+      #gear { right: 8px; }
+    </style>
+  </head>
+  <body>
+    <div id="config">
+      <div class="card">
+        <div class="brand"><span class="brand-mark"></span> Prisme.ai</div>
+        <h1 class="title">Connect your agent</h1>
+        <p class="subtitle">
+          Find the Platform and API URLs in your Prisme.ai
+          <strong>Settings → Access Tokens</strong>.
+        </p>
+
+        <label class="label" for="cfg-instance">Platform URL</label>
+        <input class="input" id="cfg-instance" placeholder="https://studio.your-company.com" spellcheck="false" />
+
+        <label class="label" for="cfg-api">API URL</label>
+        <input class="input" id="cfg-api" placeholder="https://api.your-company.com/v2" spellcheck="false" />
+
+        <label class="label" for="cfg-agent">Agent ID</label>
+        <input class="input" id="cfg-agent" placeholder="agent_xxxxxxxx…" spellcheck="false" />
+
+        <details>
+          <summary>Advanced</summary>
+          <label class="label" for="cfg-org">Org slug (only if anonymous access needs it)</label>
+          <input class="input" id="cfg-org" placeholder="my-org" spellcheck="false" />
+
+          <label class="label" for="cfg-office-tools">Office tools workspace (document actions)</label>
+          <input class="input" id="cfg-office-tools" placeholder="slug:office-mcp" spellcheck="false" />
+
+          <label class="label" for="cfg-auth">Sign-in</label>
+          <select class="input" id="cfg-auth">
+            <option value="anonymous">Anonymous</option>
+            <option value="sso">Microsoft single sign-on</option>
+          </select>
+
+          <div id="sso-fields" class="hidden">
+            <label class="label" for="cfg-sso-provider">SSO provider slug (Prisme.ai)</label>
+            <input class="input" id="cfg-sso-provider" placeholder="azure" spellcheck="false" />
+
+            <label class="label" for="cfg-sso-client">Entra application (client) ID</label>
+            <input class="input" id="cfg-sso-client" placeholder="00000000-0000-0000-0000-000000000000" spellcheck="false" />
+
+            <label class="label" for="cfg-sso-tenant">Entra directory (tenant) ID</label>
+            <input class="input" id="cfg-sso-tenant" placeholder="00000000-0000-0000-0000-000000000000" spellcheck="false" />
+          </div>
+        </details>
+
+        <p class="error" id="error" role="alert"></p>
+        <button class="btn" id="connect">Connect</button>
+      </div>
+    </div>
+
+    <button id="quote" class="float hidden" title="Quote the selection"></button>
+    <button id="newchat" class="float hidden" title="New conversation"></button>
+    <button id="gear" class="float hidden" title="Connection settings"></button>
+    <iframe id="frame" class="hidden" allow="microphone; clipboard-write"></iframe>
+
+    <script src="taskpane.js"></script>
+  </body>
+</html>
