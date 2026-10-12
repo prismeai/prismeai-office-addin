@@ -40,7 +40,7 @@ ou une **iframe dans le navigateur** (Office sur le web).
 - [ ] **Platform URL**, **API URL**, **Agent ID** (Settings → Access Tokens).
 - [ ] Mode d'auth : accès **anonyme** autorisé pour l'agent (+ `orgSlug` si l'org le restreint), ou **SSO Entra** (voir point ouvert 1 et le README).
 - [ ] Framing de `/embed/chat` : ouvert par défaut (`frame-ancestors *`). Si `EMBED_ALLOWED_ORIGINS` est défini sur le service console : y ajouter l'origine de l'hôte du volet **et** les origines d'Office sur le web (`frame-ancestors` vérifie toute la chaîne d'ancêtres ; les jokers CSP type `https://*.officeapps.live.com` sont acceptés). _Liste exacte des origines Office à valider sur une instance réelle._
-- [ ] Pour les **actions** (écrire dans le doc, brouillon de réponse) : un workspace d'outils `office-mcp` côté instance (pendant de `browser-mcp`) — **à créer**, hors de ce repo.
+- [ ] Pour les **actions** (écrire dans le doc, brouillon de réponse) : un workspace d'outils `office-mcp` côté instance (pendant de `browser-mcp`), dans le repo `prismeai-workspaces` — à importer sur l'instance.
 
 ### 3.3 Tenant Microsoft 365 (déploiement organisation)
 
@@ -89,7 +89,7 @@ permissions redemande le consentement de l'admin.
 ## 5. Points ouverts
 
 1. **SSO** : implémenté par échange de token (`auth: 'sso'`), sans changement de code plateforme — id_token Entra obtenu via MSAL Nested App Authentication, échangé sur `POST /v2/login/token-exchange`, puis passé à l'embed en `auth: 'token'`. Contraintes : fournisseur SSO Prisme en OIDC sur Entra ID, « Allow Token Exchange » activé, **même app Entra** que le SSO web (le `sub` Entra est propre à chaque app et c'est la clé de rapprochement des comptes), origine du volet dans `CORS_ADDITIONAL_ALLOWED_ORIGINS` de l'api-gateway. **Non testé dans Office.** Les autres IdP restent en anonyme (piste : client PKCE via `OIDC_EXTERNAL_CLIENTS` + dialogue Office).
-2. **Workspace `office-mcp`** : catalogue d'outils + relais emit/wait à créer côté instance (voir `README.md` pour le contrat).
+2. **Workspace `office-mcp`** : créé dans `prismeai-workspaces/workspaces/office-mcp` (calqué sur `browser-mcp`), pas encore déployé ni testé sur une instance. Voir `README.md` → Agent tools.
 3. **Stockage partitionné** : l'iframe du chat est tierce dans le volet (ITP Safari / partitionnement Chromium) → la session ne survit pas forcément à la fermeture du volet.
 4. **Recherche dans toute la boîte mail / agenda** : nécessiterait Microsoft Graph, donc une app Entra et un admin consent (c'est ce que fait Claude for Outlook : `Mail.ReadWrite`, `Calendars.Read`, `User.Read`, `offline_access`). Hors v0.
 5. **Injection de prompt** : le contenu d'un document ou d'un mail est une donnée non fiable ; les outils d'écriture doivent rester soumis aux `tool_permissions` de l'agent.

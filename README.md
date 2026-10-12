@@ -204,8 +204,8 @@ curl -sI https://office.your-company.com/icons/icon-32.png
      pane host.
 
 3. **Document actions (optional).** For the agent to write into documents,
-   install the Office tools workspace on the instance and note its slug (for
-   example `slug:office-mcp`). See [Agent tools](#agent-tools). Without it, the
+   install the `office-mcp` workspace on the instance and attach it to the
+   agent (slug `slug:office-mcp`). See [Agent tools](#agent-tools). Without it, the
    add-in is a chat that knows the open document.
 
 ### Step 3 — Generate the manifests
@@ -462,9 +462,31 @@ WebKit. On a device where WebView2 is managed by Windows Information Protection,
 
 ## Agent tools
 
-When a tools workspace is configured (`--tools`), the agent can call these
-tools. The workspace on the instance holds the tool catalog and relays each
-call to the task pane, which executes it through Office.js.
+The tools are served by the **`office-mcp`** workspace, an MCP server that runs
+on the Prisme.ai instance. It holds the tool catalog, checks the caller, and
+relays each call to the user's task pane, which executes it through Office.js on
+the open document. Nothing is read or written through Microsoft Graph.
+
+`office-mcp` is maintained in the Prisme.ai workspaces repository
+(`workspaces/office-mcp`), not in this one. It follows the same relay design as
+`browser-mcp`, the workspace behind the browser extension.
+
+To enable the tools:
+
+1. **Import `office-mcp`** on the instance.
+2. **Check its configuration.** The workspace configuration must contain the
+   `mcpTools` catalog (the eight tools below). If the agent sees no tools after
+   the import, the catalog is missing: copy it from the workspace's `index.yml`.
+3. **Add the MCP server to the agent**, with the URL
+   `<API URL>/workspaces/slug:office-mcp/webhooks/mcp`.
+4. **Point the add-in at the workspace**: generate the manifests with
+   `--tools slug:office-mcp`, or type it in **Advanced → Office tools
+   workspace** on the connection form.
+
+A call only succeeds while the user has the Prisme.ai pane open: the workspace
+waits 30 seconds for the pane to answer, then reports that no add-in is
+attached. Set the agent's tool permissions so that the tools that modify
+content ask for confirmation.
 
 | Tool | Arguments | Applications |
 |---|---|---|
@@ -482,7 +504,8 @@ call to the task pane, which executes it through Office.js.
 - **Single sign-on works with Microsoft Entra ID only** (OIDC provider on the
   instance). With any other identity provider, users are anonymous to the
   instance.
-- **The Office tools workspace is not shipped in this repository.**
+- **The Office tools workspace (`office-mcp`) is not shipped in this repository**
+  and has not been validated on a live instance yet.
 - **No mailbox-wide or calendar features** in Outlook: only the open message.
 - **No mobile clients.**
 - PDF and image attachments are not read from the open email.
@@ -491,8 +514,8 @@ call to the task pane, which executes it through Office.js.
 
 ```bash
 npm run certs      # once: install a trusted localhost certificate
-npm run manifest   # manifests pointing at https://localhost:3000
-npm run serve      # serve the task pane over HTTPS on port 3000
+npm run manifest   # manifests pointing at https://localhost:3100
+npm run serve      # serve the task pane over HTTPS on port 3100
 npm run check      # syntax check
 npm run validate   # validate the manifests against Microsoft's schema
 ```

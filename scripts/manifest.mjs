@@ -29,7 +29,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
   args[key.slice(2)] = value;
 }
 
-const host = (args.host || 'https://localhost:3000').replace(/\/+$/, '');
+const host = (args.host || 'https://localhost:3100').replace(/\/+$/, '');
 if (!host.startsWith('https://')) {
   console.error('--host must be an https:// URL (Office refuses plain HTTP).');
   process.exit(1);

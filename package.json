@@ -9,7 +9,7 @@
     "manifest": "node scripts/manifest.mjs",
     "validate": "npx --yes office-addin-manifest validate dist/manifest.xml && npx --yes office-addin-manifest validate dist/manifest-outlook.xml",
     "certs": "npx --yes office-addin-dev-certs install",
-    "serve": "npx --yes http-server . -S -C ~/.office-addin-dev-certs/localhost.crt -K ~/.office-addin-dev-certs/localhost.key -p 3000 -c-1",
+    "serve": "npx --yes http-server . -S -C ~/.office-addin-dev-certs/localhost.crt -K ~/.office-addin-dev-certs/localhost.key -p 3100 -c-1",
     "package": "mkdir -p dist && rm -f \"dist/prismeai-office-addin-$npm_package_version.zip\" && zip -r -X \"dist/prismeai-office-addin-$npm_package_version.zip\" taskpane.html taskpane.js icons vendor -x '*.DS_Store' '*.svg'"
   }
 }
