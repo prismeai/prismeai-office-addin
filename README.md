@@ -668,6 +668,14 @@ only refreshed when the agent is saved.
 - **Outlook works on the open message only**: no search across the mailbox, no
   reading of the calendar (a meeting can be prepared, but free slots are not
   looked up). PDF and image attachments are not read.
+- **Several panes open at once** (Word, Excel and PowerPoint side by side):
+  each pane answers the tool calls of its own conversation only, from the
+  second message of that conversation on. During the first message of a new
+  conversation a pane cannot tell yet: a tool of another application is left
+  to the right pane, but a tool shared by all applications (`office_read`,
+  `office_outline`, `office_search`) can be answered by another open pane, from
+  another document. Close the panes that are not in use, or send a first
+  message before asking about the document.
 - **Not available in Teams.** Teams does not load Office add-ins; it needs its
   own app package.
 - **No mobile clients.**

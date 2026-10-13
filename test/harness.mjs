@@ -486,6 +486,7 @@ export function loadPane(setup = {}) {
   const timers = [];
   const waiting = new Map();
   const sent = [];
+  const listeners = []; // the pane's handlers for messages from the chat frame
   const forms = []; // compose forms Outlook was asked to open
   const elements = new Map();
   const element = (id) => {
@@ -515,7 +516,9 @@ export function loadPane(setup = {}) {
     document: { getElementById: element, createElement: () => element(Symbol()), head: element('head') },
     location: { search: setup.debug ? '?debug=1' : '', hostname: 'addin.example.test' },
     localStorage: { getItem: () => null, setItem() {} },
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (type === 'message') listeners.push(listener);
+    },
     // Timers only fire when a test says so: no test waits on a real clock.
     setTimeout(callback, delay) {
       timers.push({ callback, due: env.now + delay, live: true });
@@ -570,7 +573,7 @@ export function loadPane(setup = {}) {
   const context = vm.createContext(sandbox);
   SCRIPTS.forEach(({ file, source }) => vm.runInContext(source, context, { filename: file }));
   // Replies go to the chat frame once it has introduced itself.
-  vm.runInContext("frameOrigin = 'https://instance.test'", context);
+  vm.runInContext("frameOrigin = 'https://instance.test'; cfg = { instance: 'https://instance.test', agent: 'agent-1', api: 'https://api.instance.test/v2' }", context);
 
   let calls = 0;
   const pane = {
@@ -589,6 +592,11 @@ export function loadPane(setup = {}) {
         pane.get('handleToolExec')({ correlationId, name, args });
       });
     },
+    // A message from the chat frame, as the pane receives it.
+    frame(message, origin = 'https://instance.test') {
+      listeners.forEach((listener) => listener({ origin, data: { source: 'prisme-embed-frame', ...message } }));
+    },
+    results: () => sent.filter((message) => message.type === 'tool-result').map(plain),
     // Moves the clock forward and fires the timers that are due.
     elapse(ms) {
       env.now += ms;

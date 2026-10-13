@@ -365,5 +365,5 @@ test('timings are only attached to results and errors in debug mode', async () =
   assert.doesNotMatch((await quiet.call('word_replace_text', { search: 'absent', replace: 'x' })).error.message, /diag/);
   const debug = loadPane({ host: 'Word', word: doc, debug: true });
   assert.equal(typeof (await debug.call('office_read', {})).result.diag.ms, 'number');
-  assert.match((await debug.call('word_replace_text', { search: 'absent', replace: 'x' })).error.message, /\| diag \{"ms":\d+,"waited":\d+\}/);
+  assert.match((await debug.call('word_replace_text', { search: 'absent', replace: 'x' })).error.message, /\| diag \{"ms":\d+,"waited":\d+,"conversation":"not reported"\}/);
 });

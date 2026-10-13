@@ -187,6 +187,8 @@ function showSettings() {
 // (Re)load the embed → a fresh conversation.
 function loadChat() {
   frameReady = false;
+  conversation = { reported: false, id: null };
+  ignoredCalls = 0;
   els.frame.src = cfg.instance + '/embed/chat?t=' + Date.now();
 }
 
@@ -233,6 +235,33 @@ function syncContext(ctx) {
   if (frameReady && lastContext) postToFrame({ type: 'setContext', context: lastContext });
 }
 
+// The conversation of this pane's chat. A user with Word, Excel and PowerPoint
+// open has one pane per application, and every pane receives every tool call
+// of that user: each one must only answer the calls of its own conversation,
+// or the first to reply — maybe the wrong document — wins.
+// `reported`: the chat has told us its conversation at least once (not every
+// version of the chat does, whatever it announces); `id`: null until the
+// first message of a fresh conversation.
+let conversation = { reported: false, id: null };
+let ignoredCalls = 0; // calls left to another pane, for the debug figures
+const CONVERSATION_CHANGED = 'chat:conversation-changed';
+const bareId = (id) => String(id).replace(/^ctx_/, '');
+
+// Whether a relayed tool call is for this pane to answer.
+function ownsToolCall({ name, contextId }) {
+  // Only a conversation the chat really gave us can rule a call out. The chat
+  // gives the id of a new conversation at the end of its first answer, after
+  // the tool calls of that answer: until then the pane cannot tell, and must
+  // not stay silent.
+  if (conversation.id !== null && contextId) {
+    return bareId(contextId) === bareId(conversation.id);
+  }
+  // No way to tell the conversations apart: at least leave a tool of another
+  // application to the pane of that application.
+  const tool = Object.prototype.hasOwnProperty.call(TOOLS, name) ? TOOLS[name] : null;
+  return !(tool && tool.host && host && tool.host !== hostName());
+}
+
 window.addEventListener('message', (event) => {
   if (event.origin !== frameOrigin) return;
   const data = event.data;
@@ -243,10 +272,15 @@ window.addEventListener('message', (event) => {
     refreshContext(); // prime immediately
   } else if (data.type === 'token-request') {
     answerTokenRequest();
+  } else if (data.type === 'event' && data.name === CONVERSATION_CHANGED) {
+    const state = (data.data && data.data.state) || {};
+    conversation = { reported: true, id: typeof state.conversationId === 'string' ? state.conversationId : null };
   } else if (data.type === 'tool-exec') {
     // The embed relayed a tool.exec.request from the agent's run (received on
-    // its session event stream). Execute it here and return the result.
-    handleToolExec(data);
+    // its session event stream). Execute it here and return the result —
+    // unless it belongs to the conversation of another pane, which answers it.
+    if (ownsToolCall(data)) handleToolExec(data);
+    else ignoredCalls++;
   }
 });
 
@@ -425,7 +459,13 @@ function handleToolExec({ correlationId, name, args }) {
     return execTool(name, args);
   };
   // `waited`: time spent behind another Office task before this one started.
-  const figures = () => ({ ms: Date.now() - started, waited: started - arrived, ...toolDiag });
+  const figures = () => ({
+    ms: Date.now() - started,
+    waited: started - arrived,
+    conversation: conversation.reported ? conversation.id || 'none yet' : 'not reported',
+    ignored: ignoredCalls || undefined,
+    ...toolDiag,
+  });
   Promise.race([exclusive(run), deadline]).then(
     (result) => {
       if (DEBUG && result && typeof result === 'object') result.diag = figures();
