@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Syntax-check the scripts (no deps, no build step).
+      - run: npm run check
+      # Unit tests of the tools, against simulated Office hosts.
+      - run: npm test
+      # Generate both manifests and validate them against Microsoft's schema.
+      - run: npm run manifest
+      - run: npm run validate
+      # Build the task pane zip and expose it as a downloadable CI artifact.
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prismeai-office-addin
+          path: |
+            dist/*.zip
+            dist/*.xml
+          if-no-files-found: error

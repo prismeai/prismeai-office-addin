@@ -52,7 +52,6 @@ let cfg = null;
 let frameOrigin = null;
 let frameReady = false;
 let lastContext = null;
-let host = null; // Office.HostType.* — null when opened outside Office (plain chat)
 
 const DEFAULTS = {
   instance: '',
@@ -86,6 +85,9 @@ const MANAGED = {
   ssoClient: params.get('sso_client'),
   ssoTenant: params.get('sso_tenant'),
 };
+// Debug mode — on a development host, or with `debug=1` in the task pane URL:
+// each tool result then carries the time it took in Office and what it cost.
+const DEBUG = params.get('debug') === '1' || ['localhost', '127.0.0.1'].includes(location.hostname);
 
 // localStorage can be unavailable or partitioned in a webview — never rely on it.
 function loadSaved() {
@@ -338,197 +340,36 @@ async function answerTokenRequest() {
   }
 }
 
-// ── Office.js helpers ────────────────────────────────────────────────────────
-const HOST_LABELS = { Word: 'Word', Excel: 'Excel', PowerPoint: 'PowerPoint', Outlook: 'Outlook' };
-function hostName() {
-  const T = Office.HostType;
-  if (host === T.Word) return HOST_LABELS.Word;
-  if (host === T.Excel) return HOST_LABELS.Excel;
-  if (host === T.PowerPoint) return HOST_LABELS.PowerPoint;
-  if (host === T.Outlook) return HOST_LABELS.Outlook;
-  return null;
-}
-
-// Callback-style Office API → promise (rejects on a failed AsyncResult).
-function officeAsync(call) {
-  return new Promise((resolve, reject) => {
-    call((res) => {
-      if (res.status === Office.AsyncResultStatus.Succeeded) resolve(res.value);
-      else reject(new Error((res.error && res.error.message) || 'Office call failed'));
-    });
-  });
-}
-
-// Mail fields are plain values in read mode and async getters in compose mode.
-function mailField(field) {
-  if (field && typeof field.getAsync === 'function') {
-    return officeAsync((cb) => field.getAsync(cb)).catch(() => undefined);
-  }
-  return Promise.resolve(field);
-}
-
-function formatAddress(a) {
-  if (!a) return '';
-  return a.displayName && a.emailAddress ? `${a.displayName} <${a.emailAddress}>` : a.emailAddress || a.displayName || '';
-}
-
-function rowsToText(values) {
-  return values.map((row) => row.join('\t')).join('\n');
-}
-
-function documentTitle() {
-  const url = (Office.context.document && Office.context.document.url) || '';
-  // Local path or web URL → keep the file name only.
-  const name = decodeURIComponent(url.split(/[\\/]/).pop().split('?')[0] || '');
-  return name || hostName() + ' document';
-}
-
-async function readWord() {
-  return Word.run(async (ctx) => {
-    const body = ctx.document.body;
-    body.load('text');
-    await ctx.sync();
-    return body.text;
-  });
-}
-
-// Active sheet's used range, capped so a huge workbook doesn't flood the context.
-const MAX_ROWS = 200;
-const MAX_COLS = 50;
-async function readExcel() {
-  return Excel.run(async (ctx) => {
-    const sheet = ctx.workbook.worksheets.getActiveWorksheet();
-    sheet.load('name');
-    const used = sheet.getUsedRangeOrNullObject(true);
-    used.load(['rowIndex', 'columnIndex', 'rowCount', 'columnCount']);
-    await ctx.sync();
-    if (used.isNullObject) return { sheet: sheet.name, address: '', values: [] };
-    const range = sheet.getRangeByIndexes(
-      used.rowIndex,
-      used.columnIndex,
-      Math.min(used.rowCount, MAX_ROWS),
-      Math.min(used.columnCount, MAX_COLS)
-    );
-    range.load(['address', 'values']);
-    await ctx.sync();
-    return { sheet: sheet.name, address: range.address, values: range.values };
-  });
-}
-
-// Shape types that never carry a text frame — loading their text would fail the batch.
-const NO_TEXT_SHAPES = ['Image', 'Group', 'Line', 'Table', 'Chart', 'Unsupported'];
-const MAX_SLIDES = 50;
-async function readPowerPoint() {
-  return PowerPoint.run(async (ctx) => {
-    const slides = ctx.presentation.slides;
-    slides.load('items');
-    await ctx.sync();
-    const items = slides.items.slice(0, MAX_SLIDES);
-    items.forEach((slide) => slide.shapes.load('items/type'));
-    await ctx.sync();
-    const out = [];
-    for (let i = 0; i < items.length; i++) {
-      const shapes = items[i].shapes.items.filter((s) => !NO_TEXT_SHAPES.includes(s.type));
-      const texts = [];
-      // One shape per sync: a shape without a text frame rejects the whole
-      // batch, and its type isn't always enough to tell.
-      for (const shape of shapes) {
-        try {
-          const range = shape.textFrame.textRange;
-          range.load('text');
-          await ctx.sync();
-          if (range.text && range.text.trim()) texts.push(range.text.trim());
-        } catch {
-          /* no text in this shape */
-        }
-      }
-      out.push({ slide: i + 1, text: texts.join('\n') });
-    }
-    return out;
-  });
-}
-
-async function readMail() {
-  const item = Office.context.mailbox.item;
-  if (!item) return null;
-  const [subject, from, to, body] = await Promise.all([
-    mailField(item.subject),
-    mailField(item.from),
-    mailField(item.to),
-    officeAsync((cb) => item.body.getAsync(Office.CoercionType.Text, cb)).catch(() => ''),
-  ]);
-  return {
-    subject: subject || '',
-    from: formatAddress(from),
-    to: (to || []).map(formatAddress).filter(Boolean),
-    body: body || '',
-  };
-}
-
-async function selectedText() {
-  const T = Office.HostType;
-  if (host === T.Excel) {
-    // Text coercion only handles a single cell → read the selected range.
-    return Excel.run(async (ctx) => {
-      const range = ctx.workbook.getSelectedRange();
-      range.load(['values', 'cellCount']);
-      await ctx.sync();
-      return range.cellCount > 1 || range.values[0][0] !== '' ? rowsToText(range.values) : '';
-    });
-  }
-  if (host === T.Outlook) {
-    const item = Office.context.mailbox.item;
-    // Only compose mode exposes the selection.
-    if (!item || typeof item.getSelectedDataAsync !== 'function') return '';
-    const res = await officeAsync((cb) => item.getSelectedDataAsync(Office.CoercionType.Text, cb));
-    return (res && res.data) || '';
-  }
-  const text = await officeAsync((cb) =>
-    Office.context.document.getSelectedDataAsync(Office.CoercionType.Text, cb)
-  );
-  return String(text || '');
-}
-
-// Full readable content of the open document / mail, as { title, content }.
-async function readDocument() {
-  const T = Office.HostType;
-  if (host === T.Word) return { title: documentTitle(), content: await readWord() };
-  if (host === T.Excel) {
-    const { sheet, address, values } = await readExcel();
-    return { title: documentTitle(), content: `Sheet: ${sheet}\nRange: ${address}\n\n${rowsToText(values)}` };
-  }
-  if (host === T.PowerPoint) {
-    const slides = await readPowerPoint();
-    return {
-      title: documentTitle(),
-      content: slides.map((s) => `--- Slide ${s.slide} ---\n${s.text}`).join('\n\n'),
-    };
-  }
-  if (host === T.Outlook) {
-    const mail = await readMail();
-    if (!mail) return { title: 'Outlook', content: '' };
-    return {
-      title: mail.subject || 'Outlook message',
-      content: `From: ${mail.from}\nTo: ${mail.to.join(', ')}\n\n${mail.body}`,
-    };
-  }
-  throw new Error('not running inside an Office application');
-}
-
 // ── Ambient document context ────────────────────────────────────────────────
 // Same shape as the extension's page context ({ title, url, selection, content })
 // so the embed serializes it identically.
+// Tells the agent where this content lives: without it, a request such as
+// "change the title of slide 2" is taken for a deck of its own to generate.
+function contextNote(more) {
+  const what = host === Office.HostType.Outlook ? 'email' : 'document';
+  return (
+    `[This is the ${what} the user has open in ${hostName()}, shared by the Prisme.ai Office add-in. ` +
+    `Requests about "this ${what}", "this slide" or "this sheet" refer to it. ` +
+    (more
+      ? 'Only its beginning is shown here: call office_outline for its structure, office_read for a given part, office_search to find a passage. '
+      : '') +
+    'To read more of it or to change it, call the Office add-in tools, not a canvas or file-generation tool.]'
+  );
+}
+
 let contextTimer;
 function refreshContext() {
   if (!host) return;
   clearTimeout(contextTimer);
   contextTimer = setTimeout(async () => {
     try {
-      const [doc, selection] = await Promise.all([readDocument(), selectedText().catch(() => '')]);
+      // One Office call at a time: the context refresh and the agent's tools
+      // would otherwise read the document concurrently.
+      const [doc, selection] = await exclusive(async () => [await readDocument(), await selectedText().catch(() => '')]);
       syncContext({
         title: `${doc.title} (${hostName()})`,
         selection: selection.slice(0, 4000) || undefined,
-        content: doc.content.slice(0, 8000),
+        content: `${contextNote(doc.more || doc.content.length > CONTEXT_CHARS)}\n\n${doc.content.slice(0, CONTEXT_CHARS)}`,
       });
     } catch (err) {
       console.warn('[prisme-office] context:', err);
@@ -548,139 +389,59 @@ function watchDocument() {
   window.addEventListener('focus', refreshContext);
 }
 
-// ── Action executor (tool-calls) ────────────────────────────────────────────
-// The agent (server) calls office_* tools on the tools workspace; those relay
-// to us through the embed. Contract (MCP-aligned): correlate by correlationId,
-// and return `result` XOR `error: {code, message}` — no `ok` flag.
-function requireHost(type, tool) {
-  if (host !== type) throw new Error(`${tool} is not available in ${hostName() || 'this context'}`);
+// Below the relay's own timeout (30 s), so a stuck Office call is reported as
+// such instead of as a missing add-in.
+const TOOL_TIMEOUT_MS = 25000;
+
+// Runs Office work one task at a time. A task that never settles is given up
+// on after the tool timeout, so it can't block the ones queued behind it.
+let officeQueue = Promise.resolve();
+function exclusive(task) {
+  const previous = officeQueue;
+  const run = previous.then(task);
+  const giveUp = previous.then(() => new Promise((resolve) => setTimeout(resolve, TOOL_TIMEOUT_MS)));
+  officeQueue = Promise.race([run.catch(() => {}), giveUp]);
+  return run;
 }
 
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-}
-
-async function insertText({ text, location }) {
-  if (typeof text !== 'string') throw new Error('text is required');
-  const T = Office.HostType;
-  if (host === T.Word) {
-    await Word.run(async (ctx) => {
-      if (location === 'start' || location === 'end') {
-        ctx.document.body.insertText(text, location === 'start' ? 'Start' : 'End');
-      } else {
-        ctx.document.getSelection().insertText(text, 'Replace');
-      }
-      await ctx.sync();
-    });
-    return { ok: true };
-  }
-  if (host === T.Outlook) {
-    const item = Office.context.mailbox.item;
-    if (!item || typeof item.body.setSelectedDataAsync !== 'function') {
-      throw new Error('the message is open in read mode — use outlook_draft_reply');
-    }
-    await officeAsync((cb) =>
-      item.body.setSelectedDataAsync(text, { coercionType: Office.CoercionType.Text }, cb)
-    );
-    return { ok: true };
-  }
-  // Excel (active cell) and PowerPoint (selected text box).
-  await officeAsync((cb) =>
-    Office.context.document.setSelectedDataAsync(text, { coercionType: Office.CoercionType.Text }, cb)
-  );
-  return { ok: true };
-}
-
-const MAX_CELLS = 5000;
-function targetSheet(ctx, name) {
-  return name ? ctx.workbook.worksheets.getItem(name) : ctx.workbook.worksheets.getActiveWorksheet();
-}
-
-async function excelReadRange({ address, sheet }) {
-  return Excel.run(async (ctx) => {
-    const range = address ? targetSheet(ctx, sheet).getRange(address) : ctx.workbook.getSelectedRange();
-    range.load(['address', 'cellCount']);
-    await ctx.sync();
-    if (range.cellCount > MAX_CELLS) {
-      throw new Error(`range ${range.address} has ${range.cellCount} cells (max ${MAX_CELLS}) — narrow it`);
-    }
-    range.load(['values', 'formulas']);
-    await ctx.sync();
-    return { address: range.address, values: range.values, formulas: range.formulas };
-  });
-}
-
-async function excelWriteRange({ address, values, sheet }) {
-  if (!address) throw new Error('address is required');
-  const rows = Array.isArray(values) ? values : null;
-  if (!rows || !rows.length || !rows.every((r) => Array.isArray(r) && r.length === rows[0].length)) {
-    throw new Error('values must be a non-empty rectangular 2D array');
-  }
-  return Excel.run(async (ctx) => {
-    // `address` is the top-left anchor; the range grows to fit `values`.
-    const range = targetSheet(ctx, sheet)
-      .getRange(address)
-      .getCell(0, 0)
-      .getResizedRange(rows.length - 1, rows[0].length - 1);
-    range.values = rows; // a string starting with "=" is written as a formula
-    range.load('address');
-    await ctx.sync();
-    return { ok: true, address: range.address };
-  });
-}
-
-async function outlookDraftReply({ body, replyAll }) {
-  if (typeof body !== 'string') throw new Error('body is required');
-  const item = Office.context.mailbox.item;
-  if (!item || typeof item.displayReplyForm !== 'function') {
-    throw new Error('no message open in read mode');
-  }
-  // Opens Outlook's own reply form, unsent — the user reviews and sends.
-  if (replyAll) item.displayReplyAllForm(escapeHtml(body));
-  else item.displayReplyForm(escapeHtml(body));
-  return { ok: true, sent: false };
-}
-
-async function execTool(tool, args) {
-  args = args || {};
-  if (!host) throw new Error('not running inside an Office application');
-  const T = Office.HostType;
-  switch (tool) {
-    case 'office_read':
-      return { host: hostName(), ...(await readDocument()) };
-    case 'office_get_selection':
-      return { host: hostName(), text: await selectedText() };
-    case 'office_insert_text':
-      return insertText(args);
-    case 'excel_read_range':
-      requireHost(T.Excel, tool);
-      return excelReadRange(args);
-    case 'excel_write_range':
-      requireHost(T.Excel, tool);
-      return excelWriteRange(args);
-    case 'powerpoint_read_slides':
-      requireHost(T.PowerPoint, tool);
-      return { slides: await readPowerPoint() };
-    case 'outlook_read_item':
-      requireHost(T.Outlook, tool);
-      return readMail();
-    case 'outlook_draft_reply':
-      requireHost(T.Outlook, tool);
-      return outlookDraftReply(args);
-    default:
-      throw new Error('unknown tool ' + tool);
-  }
-}
-
+// The agent (server) calls a tool on the tools workspace, which relays it to
+// us through the embed. Contract (MCP-aligned): correlate by correlationId,
+// and answer `result` XOR `error: {code, message}` — exactly once.
 function handleToolExec({ correlationId, name, args }) {
   const reply = (payload) => postToFrame(Object.assign({ type: 'tool-result', correlationId }, payload));
-  execTool(name, args).then(
-    (result) => reply({ result }),
-    (err) => reply({ error: { code: 1, message: String((err && err.message) || err) } })
+  const fail = (message) => reply({ error: { code: 1, message } });
+  const deadline = new Promise((_, reject) =>
+    setTimeout(
+      () => reject(new Error(`${name} did not complete in ${hostName()} within ${TOOL_TIMEOUT_MS / 1000} s`)),
+      TOOL_TIMEOUT_MS
+    )
+  );
+  const arrived = Date.now();
+  let started = 0;
+  const run = () => {
+    started = Date.now();
+    toolDiag = {};
+    officeStep = '';
+    return execTool(name, args);
+  };
+  // `waited`: time spent behind another Office task before this one started.
+  const figures = () => ({ ms: Date.now() - started, waited: started - arrived, ...toolDiag });
+  Promise.race([exclusive(run), deadline]).then(
+    (result) => {
+      if (DEBUG && result && typeof result === 'object') result.diag = figures();
+      const size = JSON.stringify(result === undefined ? null : result).length;
+      if (size > MAX_RESULT_CHARS) {
+        fail(`${name} returned ${size} characters (max ${MAX_RESULT_CHARS}) — ask for a smaller part`);
+      } else {
+        reply({ result });
+      }
+    },
+    (err) => {
+      const step = officeStep ? ` (while ${officeStep})` : '';
+      const diag = DEBUG && started ? ` | diag ${JSON.stringify(figures())}` : '';
+      officeStep = '';
+      fail(String((err && err.message) || err) + step + diag);
+    }
   );
 }
 

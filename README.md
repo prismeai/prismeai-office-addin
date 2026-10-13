@@ -4,9 +4,10 @@
 
 A Microsoft 365 add-in that opens a Prisme.ai agent in a pane next to the
 document or email you are working on, in **Word, Excel, PowerPoint and Outlook**
-(Windows, Mac and web). The agent reads the open document, the selection or the
-open message, and — when its tools are enabled — writes back: insert text, fill
-an Excel range, prepare a reply draft.
+(Windows, Mac and web). The agent knows the open document, the selection or the
+open message, and — when its tools are enabled — works in it: find a passage in
+a long document, compute over a large sheet, rewrite a paragraph or a slide,
+fill an Excel range, prepare a reply or a meeting.
 
 This guide is for administrators installing the add-in against a **self-hosted
 Prisme.ai instance**.
@@ -130,6 +131,7 @@ host:
 ```
 taskpane.html
 taskpane.js
+tools/office.js  word.js  excel.js  powerpoint.js  outlook.js  index.js
 icons/icon-16.png  icon-32.png  icon-64.png  icon-80.png  icon-128.png
 vendor/msal-browser.min.js        (Microsoft's sign-in library, used by single sign-on only)
 ```
@@ -145,7 +147,7 @@ Server requirements:
   web loads the pane inside an iframe.
 - **Icons must be cacheable**: no `Cache-Control: no-cache` or `no-store` on
   `/icons/`.
-- Do not cache `taskpane.html` and `taskpane.js` for long, so updates reach
+- Do not cache `taskpane.html`, `taskpane.js` and `tools/` for long, so updates reach
   users quickly.
 
 Example nginx server block:
@@ -175,10 +177,18 @@ curl -sI https://office.your-company.com/icons/icon-32.png
 
 ### Step 2 — Prepare the Prisme.ai instance
 
-1. **Agent access.** For anonymous sign-in, confirm the agent can be used
-   anonymously (and note the org slug if anonymous access is scoped to an
-   organization). For single sign-on, confirm your users have access to the
-   agent.
+1. **Agent access.** For single sign-on, confirm your users have access to the
+   agent. For anonymous sign-in, all of the following must be true:
+
+   - The agent is **published** and its visibility is **Public**.
+   - **Anonymous access is enabled on the agent's organization**, with a role.
+     Note the organization slug: it is the `--org` option in Step 3. Without
+     it, the anonymous visitor belongs to no organization and the agent is
+     refused.
+   - If the organization restricts anonymous access to a list of **allowed
+     domains**, that list contains the task pane host (for example
+     `prisme-addin.your-company.com`). The instance checks the host of the page
+     that embeds the chat, which is the task pane.
 
 2. **Framing.** The chat page `/embed/chat` must be allowed to load inside the
    task pane. Check what your console currently sends:
@@ -203,10 +213,12 @@ curl -sI https://office.your-company.com/icons/icon-32.png
      [Troubleshooting](#troubleshooting)). Office desktop only needs the task
      pane host.
 
-3. **Document actions (optional).** For the agent to write into documents,
-   install the `office-mcp` workspace on the instance and attach it to the
-   agent (slug `slug:office-mcp`). See [Agent tools](#agent-tools). Without it, the
-   add-in is a chat that knows the open document.
+3. **Document tools (optional).** For the agent to read beyond the beginning
+   of a long document, search it, compute over a sheet and write into the
+   document, install the `office-mcp` workspace on the instance and attach it
+   to the agent (slug `slug:office-mcp`). See [Agent tools](#agent-tools).
+   Without it, the add-in is a chat that knows the beginning of the open
+   document.
 
 ### Step 3 — Generate the manifests
 
@@ -232,7 +244,7 @@ both against Microsoft's schema. Both commands must end without error.
 | `--api` | Recommended | API URL. |
 | `--agent` | Recommended | Agent ID. |
 | `--org` | No | Org slug, if anonymous access requires it. |
-| `--tools` | No | Office tools workspace slug. Omit to disable document actions. |
+| `--tools` | No | Office tools workspace slug. Omit to disable the document tools. |
 | `--auth` | No | `anonymous` (default) or `sso`. |
 | `--sso-provider` | With `--auth sso` | Slug of the Entra ID SSO provider on the instance. |
 | `--sso-client-id` | With `--auth sso` | Application (client) ID of the Entra app. |
@@ -337,9 +349,76 @@ Deploy to yourself first, using the same procedure as
 audience. Then run the checks in [Step 6](#step-6--verify) in each application
 your users rely on, on desktop and on the web.
 
-To try a manifest without an admin deployment, you can also
-[sideload it](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/sideload-office-add-ins-for-testing)
-(Outlook: [sideload an Outlook add-in](https://learn.microsoft.com/en-us/office/dev/add-ins/outlook/sideload-outlook-add-ins-for-testing)).
+To try a manifest without an admin deployment, sideload it yourself. The
+procedure below uses Office on the web, which needs nothing installed. The
+task pane must be reachable from your browser (your hosted URL, or
+`npm run serve` for a local manifest).
+
+#### Word, Excel and PowerPoint
+
+These three applications share one file: `dist/manifest.xml`.
+
+1. Open a document in Word on the web, a workbook in Excel on the web, or a
+   presentation in PowerPoint on the web.
+2. On the **Home** tab, select **Add-ins → More Add-ins → My Add-ins → Upload
+   My Add-in**.
+3. Choose `dist/manifest.xml`.
+4. The **Prisme.ai** button appears on the **Home** tab.
+
+Repeat these steps **in each application**: a manifest uploaded in Word is not
+available in Excel or PowerPoint. The upload is kept in the browser, so it has
+to be done again in another browser or after clearing site data.
+
+#### Outlook
+
+Outlook uses its own file: `dist/manifest-outlook.xml`.
+
+1. Open <https://aka.ms/olksideload>. Outlook on the web opens with the
+   **Add-Ins for Outlook** dialog.
+2. Select **My add-ins → Custom Addins → Add a custom add-in → Add from File**.
+3. Choose `dist/manifest-outlook.xml`.
+4. Open an email: the **Prisme.ai** button is in the message ribbon, or under
+   **Apps**.
+
+This requires an Exchange Online mailbox (Microsoft 365). It does not work with
+IMAP or POP accounts.
+
+#### What to try in each application
+
+| Application | Document context | Agent tools |
+|---|---|---|
+| Word | *"Summarize this document."* | *"Give me the outline of this document"*, *"Where is the penalty clause?"*, then *"Add a conclusion at the end."* |
+| Excel | *"Summarize this sheet."* | *"Which sheets does this workbook contain?"*, *"What is the total amount per region?"*, then *"Write this table starting at B2."* |
+| PowerPoint | *"Summarize this presentation."* | *"What is on slide 2?"*, *"Rewrite the title of slide 2"*, then *"Add a slide after slide 2 with the same design."* |
+| Outlook, reading an email | *"What is this email about?"* | *"Prepare a reply"*, then *"Create a meeting tomorrow at 10 with the sender"*: an unsent form must open each time. |
+| Outlook, writing an email | Select some text, then the **quote** button. | *"Insert a closing sentence."* |
+
+In every application, also select some text or cells, select the **quote**
+button at the top of the pane, and check the selection appears in the message
+box.
+
+Keep in mind while testing:
+
+- **Keep the pane open** while a tool runs. Otherwise the agent waits 30 seconds,
+  then reports that no add-in is attached.
+- **In Outlook, pin the pane.** Otherwise the agent keeps answering about the
+  previous email when you open another one.
+- **The agent tools need the `office-mcp` workspace** (see
+  [Agent tools](#agent-tools)). If the document context works but a tool
+  fails, check first that `office-mcp` is imported on the instance and added to
+  the agent as an MCP server.
+- **In PowerPoint, name the slide** ("slide 4"): the add-in cannot tell which
+  slide is on screen.
+- Only these four applications are supported. The pane behaves as a plain chat
+  in any other Office application, and the Office mobile apps are not
+  supported.
+
+For the desktop applications, follow Microsoft's guides:
+[sideload an Office Add-in](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/sideload-office-add-ins-for-testing)
+and
+[sideload an Outlook add-in](https://learn.microsoft.com/en-us/office/dev/add-ins/outlook/sideload-outlook-add-ins-for-testing).
+The wording of these menus changes over time; Microsoft's guides are the
+reference.
 
 ### Step 5 — Deploy to the organization
 
@@ -381,12 +460,12 @@ As an assigned user:
 5. If single sign-on is enabled, the chat opens without any sign-in prompt
    (Microsoft may ask for consent once), and the conversation appears under the
    user's own account on the instance.
-6. If document actions are enabled, ask the agent to insert a sentence at the
+6. If the document tools are enabled, ask the agent to insert a sentence at the
    cursor and confirm it appears in the document.
 
 ## Updating and removing
 
-**New version of the task pane** (`taskpane.html`, `taskpane.js`): replace the
+**New version of the task pane** (`taskpane.html`, `taskpane.js`, `tools/`): replace the
 files on the host. No change in the admin center. Users get the new version the
 next time they open the pane.
 
@@ -417,7 +496,8 @@ for both manifests. See
 | The pane shows the header buttons but the chat area is blank | The instance refuses to be framed | Open the browser developer tools (Office on the web) and look for a `frame-ancestors` error. Add the refused origin to `EMBED_ALLOWED_ORIGINS` ([Step 2](#step-2--prepare-the-prismeai-instance)). |
 | | Platform URL wrong or unreachable | Open `<platform-url>/embed/chat` in a browser on the same device. |
 | The chat loads but messages fail | API URL wrong or blocked, or WebSocket blocked by a proxy | Check the API URL and the proxy rules. |
-| | Agent not available anonymously | Check the agent's access settings and the `--org` slug. |
+| | Agent not available anonymously | Check that the agent is published and Public, and the `--org` slug. |
+| The message is sent and nothing comes back (anonymous) | The instance refused the anonymous session, and this version of the chat does not display the refusal | In the browser developer tools, read the response of the `messages/stream` and `login/anonymous` requests. Most often the task pane host is missing from the organization's allowed domains for anonymous access. |
 | The pane returns to the connection form with "Could not reach the Prisme.ai API" (SSO) | The task pane host is not allowed by the API | Add it to `CORS_ADDITIONAL_ALLOWED_ORIGINS` on the api-gateway and restart it. |
 | "The Prisme.ai instance refused the sign-in" (SSO) | Token exchange not enabled, wrong provider slug, or issuer mismatch | Check **Allow Token Exchange**, the slug, and that the provider's issuer is exactly `https://login.microsoftonline.com/<tenant-id>/v2.0`. |
 | | The ID token comes from another app registration | Use the client ID of the app registration configured on the SSO provider. |
@@ -428,6 +508,10 @@ for both manifests. See
 | The agent does not know the document | Empty document, or content not loaded yet | Click in the document, then ask again. Context is refreshed when the selection changes. |
 | The agent answers about the previous email | The pane is not pinned (Outlook) | Pin the pane so it follows the selected message. |
 | The agent says it cannot edit the document | No tools workspace configured | Install it on the instance and regenerate the manifests with `--tools`. |
+| The agent does not use a tool added to `office-mcp`, or calls one that no longer exists | The agent keeps the tool list of an MCP server in a cache | Save the agent again in Agent Factory, then start a new conversation. |
+| A tool fails with "unknown tool" or "Tool not found" | The task pane files and the `office-mcp` workspace are not from the same version | Update both: the files on the task pane host, and the workspace on the instance. |
+| "No Office add-in attached" | The pane was closed, reloaded or still loading when the tool was called | Open the pane, wait for the chat, and ask again. |
+| PowerPoint slides come back flagged `incomplete`, or a read is slow, right after opening a long presentation | PowerPoint on the web is still loading the far slides | Ask again a moment later. |
 | Users still see an old version after an update | Office cached the manifest or the pane | Check the manifest version was raised. Then [clear the Office cache](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/clear-cache) on the device. |
 | A new conversation starts every time the pane is opened | The chat runs in a third-party iframe, and browsers isolate or clear its storage | Can happen in this version, depending on the browser or webview. |
 
@@ -437,13 +521,16 @@ WebKit. On a device where WebView2 is managed by Windows Information Protection,
 
 ## Security and data flow
 
-- **What the add-in reads**: the open document (Word body, the active Excel
-  sheet's used range capped at 200 × 50 cells, PowerPoint slide text capped at
-  50 slides), the current selection, and in Outlook the open message (subject,
-  sender, recipients, body). It does not read other files, other mailbox
-  folders, or the calendar.
-- **Where it goes**: only to the Prisme.ai instance in the manifest, when the
-  user sends a message. The task pane host serves static files and receives no
+- **What the add-in reads**: as context for each message, the beginning of the
+  open document (about 8,000 characters: the first paragraphs in Word, the top
+  of the active sheet in Excel, the first slides in PowerPoint), the current
+  selection, and in Outlook the open message (subject, sender, recipients,
+  body). When the tools are enabled, also any part of the open document the
+  agent asks for, including the other worksheets of the workbook. It does not
+  read other files, other mailbox folders, or the calendar.
+- **Where it goes**: only to the Prisme.ai instance in the manifest: the
+  context when the user sends a message, and the result of a tool when the
+  agent calls one. The task pane host serves static files and receives no
   document content.
 - **Permissions requested from Office**: `ReadWriteDocument` (Word, Excel,
   PowerPoint) and `ReadWriteItem` (Outlook, the open item only). The add-in
@@ -454,8 +541,9 @@ WebKit. On a device where WebView2 is managed by Windows Information Protection,
   audience before opening a session. The resulting session token is passed to
   the chat iframe and kept in memory only. No client secret is involved.
 - **Writing**: document edits happen only when the agent calls a tool, under
-  the tool permissions configured on the agent. The add-in never sends email:
-  a reply is opened as a draft for the user to review and send.
+  the tool permissions configured on the agent. The add-in never sends an
+  email or an invitation: a reply, a new email or a meeting is opened in
+  Outlook's own form for the user to review and send.
 - **Untrusted content**: a document or email can contain text written to
   manipulate the agent. Keep confirmation enabled on the agent for tools that
   modify content, and have users review changes.
@@ -475,7 +563,7 @@ To enable the tools:
 
 1. **Import `office-mcp`** on the instance.
 2. **Check its configuration.** The workspace configuration must contain the
-   `mcpTools` catalog (the eight tools below). If the agent sees no tools after
+   `mcpTools` catalog (the tools listed below). If the agent sees no tools after
    the import, the catalog is missing: copy it from the workspace's `index.yml`.
 3. **Add the MCP server to the agent**, with the URL
    `<API URL>/workspaces/slug:office-mcp/webhooks/mcp`.
@@ -488,27 +576,101 @@ waits 30 seconds for the pane to answer, then reports that no add-in is
 attached. Set the agent's tool permissions so that the tools that modify
 content ask for confirmation.
 
+### Reading: three tools, the same in every application
+
+A document can be a three-hundred-page contract or a workbook of several
+hundred thousand rows, so no tool returns "the document". The agent works the
+way one works on a large file: look at the structure, read one part, search.
+
+| Tool | Arguments | What it returns |
+|---|---|---|
+| `office_outline` | `{ from? }` | What the document is made of and how big it is, without its content. Word: number of paragraphs and the headings with their position. Excel: each worksheet with its used range, size and first row. PowerPoint: number of slides and the title of each. Outlook: subject, sender, recipients, length. |
+| `office_read` | `{ target? }` | One part of the document, from the start when `target` is omitted. |
+| `office_search` | `{ query, in?, limit? }` | The number of matches and, for the first ones (20 by default, 50 at most), their position and the surrounding text, or the whole row in Excel. Plain text, case-insensitive. |
+
+A position is a short string, returned by one tool and accepted as is by the
+others:
+
+| Application | Position | Meaning |
+|---|---|---|
+| Word | `p:120`, `p:120-180` | Paragraph number, or a span of paragraphs |
+| Excel | `Sales!A1:L50`, `A1:C20`, `Sales` | A range on a sheet, a range on the active sheet, the top of a sheet |
+| PowerPoint | `slide:12`, `slide:12-20` | Slide number, or a span of slides |
+| Outlook | `c:12001` | Character position in the body of the email |
+
+Every answer is bounded: a read returns about 12,000 characters of content at
+most, and no tool result exceeds 40,000 characters. When there is more, the
+result carries `next`, the position to pass to the same tool to continue. A
+search or an aggregation that runs out of time returns what it has, flagged
+`partial`, with the position to resume from.
+
+### Selection and writing
+
 | Tool | Arguments | Applications |
 |---|---|---|
-| `office_read` | — | All |
 | `office_get_selection` | — | All (Outlook: compose mode only) |
 | `office_insert_text` | `{ text, location?: 'replace' \| 'start' \| 'end' }` | All (`location` applies to Word; elsewhere the selection is replaced) |
-| `excel_read_range` | `{ address?, sheet? }` — defaults to the selection, 5,000 cells maximum | Excel |
+| `word_replace_text` | `{ search, replace, paragraph?, all? }` — `search` is the exact text, one line of 255 characters at most; `paragraph` limits the change to that paragraph | Word |
+| `word_insert_paragraph` | `{ text, after_paragraph?, after?, heading? }` — after a paragraph number, after the paragraph containing `after`, or at the end | Word |
+| `word_add_comment` | `{ anchor, comment, paragraph? }` | Word |
+| `excel_compute` | `{ op, value?, group_by?, filter?, sheet? }` — `op` is sum, count, average, min or max; columns are named by header or by letter; `filter` is `{ column, equals }`. Computes over the whole table without handing its rows to the agent | Excel |
 | `excel_write_range` | `{ address, values, sheet? }` — `address` is the top-left cell, `values` a 2D array | Excel |
-| `powerpoint_read_slides` | — | PowerPoint |
-| `outlook_read_item` | — | Outlook |
+| `excel_add_sheet` | `{ name }` | Excel |
+| `excel_add_chart` | `{ address, type?, title?, sheet? }` — `type` is column, bar, line, pie, area or scatter | Excel |
+| `powerpoint_write_slide` | `{ text, slide, shape? }` — `shape` is a shape `id` (from `office_read` or `office_search`) whose text is replaced; without it a new text box is added | PowerPoint |
+| `powerpoint_add_slide` | `{ like?, position?, duplicate? }` — adds an empty slide with the layout of slide `like` (or a full copy with `duplicate`), at slide number `position` (defaults to the end); returns the new slide's shapes | PowerPoint |
+| `powerpoint_delete_slide` | `{ slide }` | PowerPoint |
+| `powerpoint_move_slide` | `{ slide, position }` | PowerPoint |
 | `outlook_draft_reply` | `{ body, replyAll? }` — opens an unsent draft | Outlook (read mode) |
+| `outlook_draft_new` | `{ body, to?, cc?, subject? }` — opens an unsent new message | Outlook |
+| `outlook_draft_meeting` | `{ subject, attendees?, optional?, start?, end?, location?, body? }` — opens an unsent meeting; `start` and `end` are local times such as `2026-10-14T10:00` | Outlook |
+
+After the catalog of `office-mcp` changes, save the agent again in Agent
+Factory: the agent keeps the list of tools of an MCP server in a cache that is
+only refreshed when the agent is saved.
 
 ## Known limitations
 
 - **Single sign-on works with Microsoft Entra ID only** (OIDC provider on the
   instance). With any other identity provider, users are anonymous to the
   instance.
-- **The Office tools workspace (`office-mcp`) is not shipped in this repository**
-  and has not been validated on a live instance yet.
-- **No mailbox-wide or calendar features** in Outlook: only the open message.
+- **The Office tools workspace (`office-mcp`) is not shipped in this
+  repository.** It lives in the Prisme.ai workspaces repository and is deployed
+  separately; the add-in and the workspace must expose the same list of tools.
+- **Text only.** The tools read and write text, cell values and formulas.
+  Images, charts, tables in slides, speaker notes, formatting, headers, footers
+  and footnotes are not read. In Word, the cells of a table are read as
+  paragraphs.
+- **Large documents are read in parts**, never as a whole: about 12,000
+  characters per read. The agent is given the beginning of the document as
+  context and uses the outline, read and search tools for the rest.
+- **Search is plain text**: case-insensitive, no wildcard, no regular
+  expression, one line of 255 characters at most. In Word and PowerPoint a
+  match cannot span two paragraphs or two shapes.
+- **`excel_compute` handles one table per sheet**: the first row of the used
+  range is taken as the headers, the filter is a single equality, and the 50
+  largest groups are returned.
+- **A tool call has 25 seconds.** A search or an aggregation that needs more
+  returns a partial result with the position to resume from. Timings depend on
+  the host: PowerPoint on the web is the slowest, at a few hundred
+  milliseconds per round trip.
+- **PowerPoint: the slide on screen is not detected.** Writing takes a slide
+  number; the user has to name the slide ("slide 12").
+- **PowerPoint: a long presentation that was just opened is read slowly at
+  first.** For a few minutes PowerPoint on the web can refuse the text of the
+  far slides (observed past slide 100 of a 150-slide deck). Those slides come
+  back flagged `incomplete` and read normally a moment later.
+- **The tools have been tested on Office on the web.** The desktop clients load the same code;
+  pilot them before a rollout ([Step 4](#step-4--pilot-with-one-user)).
+- **Word paragraph numbers shift when paragraphs are inserted or deleted**:
+  after such a change, the agent has to read or search again before using a
+  position.
+- **Outlook works on the open message only**: no search across the mailbox, no
+  reading of the calendar (a meeting can be prepared, but free slots are not
+  looked up). PDF and image attachments are not read.
+- **Not available in Teams.** Teams does not load Office add-ins; it needs its
+  own app package.
 - **No mobile clients.**
-- PDF and image attachments are not read from the open email.
 
 ## Local development
 
@@ -517,6 +679,7 @@ npm run certs      # once: install a trusted localhost certificate
 npm run manifest   # manifests pointing at https://localhost:3100
 npm run serve      # serve the task pane over HTTPS on port 3100
 npm run check      # syntax check
+npm test           # unit tests (Node's built-in runner, no dependency)
 npm run validate   # validate the manifests against Microsoft's schema
 ```
 
@@ -525,11 +688,25 @@ or run `npx office-addin-debugging start dist/manifest.xml` for Office desktop.
 
 There is no build step: the task pane is plain HTML and JavaScript.
 
+Served from `localhost` or `127.0.0.1`, or with `debug=1` added to the task
+pane URL, the pane runs in debug mode: each tool result carries a `diag` entry
+with the time spent in Office. It is off on a production host.
+
 Layout:
 
-- `taskpane.html`, `taskpane.js` — the pane: hosts the chat iframe, pushes the
-  document context, executes the agent's tools.
+- `taskpane.html`, `taskpane.js` — the pane: connection form, sign-in, the chat
+  iframe, the document context pushed to the agent, and the reception of the
+  agent's tool calls (one at a time, with a time limit).
+- `tools/` — what the tools do, one file per application (`word.js`,
+  `excel.js`, `powerpoint.js`, `outlook.js`), `office.js` for what they share
+  and `index.js` for the tools common to all applications and the table of
+  every tool by name. Plain scripts loaded by `taskpane.html`, in that order.
 - `scripts/manifest.mjs` — generates both XML manifests.
+- `test/` — unit tests. `harness.mjs` loads the pane's scripts against in-memory
+  documents that behave like the Office hosts (data only after `load` and
+  `sync`, a rejected PowerPoint batch, a host that stops answering) and counts
+  what is pulled out of the document, so a test can check that a tool stays
+  cheap on a large file, not only that its answer is right.
 - `vendor/msal-browser.min.js` — `@azure/msal-browser` 5.25.0, unmodified
   (`lib/msal-browser.min.js` from the npm package; licence alongside). Loaded
   only when single sign-on is enabled.

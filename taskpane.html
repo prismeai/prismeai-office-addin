@@ -117,6 +117,13 @@
     <button id="gear" class="float hidden" title="Connection settings"></button>
     <iframe id="frame" class="hidden" allow="microphone; clipboard-write"></iframe>
 
+    <!-- Classic scripts sharing one scope, in this order: the tools, then the shell. -->
+    <script src="tools/office.js"></script>
+    <script src="tools/word.js"></script>
+    <script src="tools/excel.js"></script>
+    <script src="tools/powerpoint.js"></script>
+    <script src="tools/outlook.js"></script>
+    <script src="tools/index.js"></script>
     <script src="taskpane.js"></script>
   </body>
 </html>
