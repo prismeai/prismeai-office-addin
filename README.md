@@ -271,7 +271,8 @@ signed in with in Office. In desktop Office there is no sign-in window: Office
 hands the add-in a Microsoft ID token. In Office on the web, clicking
 **Connect** opens a small Prisme.ai window: the user clicks **Continue**, and
 Microsoft's sign-in window opens (it closes by itself if the user is already
-signed in to Microsoft). Your instance exchanges the ID token for a
+signed in to Microsoft). The sign-in is then reused as long as the browser tab
+stays open. Your instance exchanges the ID token for a
 Prisme.ai session for that user, and the agent runs with the user's own
 identity and permissions.
 
