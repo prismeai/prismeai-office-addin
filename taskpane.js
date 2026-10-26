@@ -340,11 +340,18 @@ async function entraIdToken() {
       system: { popupBridgeTimeout: 300000 },
     });
   }
-  const request = { scopes: ['User.Read', 'openid', 'profile'] };
+  // Without an account, the silent call of Office on the web always fails.
+  const request = { scopes: ['User.Read', 'openid', 'profile'], account: msalApp.getAllAccounts()[0] };
   let result;
   try {
     result = await msalApp.acquireTokenSilent(request);
   } catch {
+    // The browser blocks the popup of Office on the web unless the user has
+    // just clicked (auto-connect at startup, token renewal): ask for Connect.
+    const activation = navigator.userActivation;
+    if (Office.context.platform === Office.PlatformType.OfficeOnline && activation && !activation.isActive) {
+      throw new Error('Click Connect to sign in with your Microsoft account.');
+    }
     // First use, or consent needed: Microsoft's prompt, shown by the Office host
     // on desktop and in a popup on the web.
     result = await msalApp.acquireTokenPopup(request);
