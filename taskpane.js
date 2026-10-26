@@ -168,6 +168,13 @@ function connect() {
   }
   showError('');
   save(cfg);
+  // Sign in now, while the click still counts as a user gesture: started when
+  // the chat asks for its token, the popup of Office on the web is blocked.
+  if (cfg.auth === 'sso') {
+    session = null;
+    signingIn = openSession();
+    signingIn.catch(() => {}); // reported by answerTokenRequest
+  }
   loadChat();
   els.config.classList.add('hidden');
   els.frame.classList.remove('hidden');
@@ -288,14 +295,14 @@ window.addEventListener('message', (event) => {
 });
 
 // ── Single sign-on (auth: 'sso') ─────────────────────────────────────────────
-// No popup, no redirect: the user is already signed in to Microsoft in Office,
-// so MSAL's Nested App Authentication hands us an Entra id_token through the
-// Office host, and the instance trades it for a nominative Prisme.ai session
-// (POST /login/token-exchange). The Entra app must be the one the instance's
-// SSO provider already uses: Entra's `sub` differs per app registration, and
-// that is what the instance matches users on.
+// MSAL's Nested App Authentication hands us an Entra id_token for the user
+// signed in to Office — through the host on desktop, through a Microsoft popup
+// on the web — and the instance trades it for a nominative Prisme.ai session
+// (POST /login/token-exchange). The token's audience is the Entra app: the
+// instance only accepts its SSO provider's client ID or token-exchange audiences.
 let msalApp = null;
 let session = null; // { token, expires (epoch ms), servedAt (epoch ms) }
+let signingIn = null; // sign-in started by the Connect click, not yet handed to the chat
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -308,7 +315,10 @@ function loadScript(src) {
 }
 
 async function entraIdToken() {
-  if (!host) throw new Error('Single sign-on only works inside an Office application.');
+  if (!window.Office) {
+    throw new Error('Office.js did not load: check that appsforoffice.microsoft.com is reachable from this device.');
+  }
+  if (!host) throw new Error('Single sign-on only works inside Word, Excel, PowerPoint or Outlook.');
   if (!Office.context.requirements.isSetSupported('NestedAppAuth', '1.1')) {
     throw new Error('This version of Office does not support single sign-on. Update Office and try again.');
   }
@@ -320,7 +330,14 @@ async function entraIdToken() {
       auth: {
         clientId: cfg.ssoClient,
         authority: 'https://login.microsoftonline.com/' + cfg.ssoTenant,
+        // Where Office does not broker the sign-in (Office on the web), a popup
+        // opened by this iframe can't answer it directly (storage partitioning,
+        // COOP): a top-level relay page opens Microsoft's window and relays back.
+        popupRelayUri: new URL('popup-relay.html', location.href).href,
+        redirectUri: new URL('auth-redirect.html', location.href).href,
       },
+      // Time to click Continue in the relay, then sign in (default 60 s).
+      system: { popupBridgeTimeout: 300000 },
     });
   }
   const request = { scopes: ['User.Read', 'openid', 'profile'] };
@@ -328,7 +345,8 @@ async function entraIdToken() {
   try {
     result = await msalApp.acquireTokenSilent(request);
   } catch {
-    // First use, or consent needed: the Office host shows Microsoft's prompt.
+    // First use, or consent needed: Microsoft's prompt, shown by the Office host
+    // on desktop and in a popup on the web.
     result = await msalApp.acquireTokenPopup(request);
   }
   if (!result || !result.idToken) throw new Error('Microsoft did not return an ID token.');
@@ -363,6 +381,11 @@ async function openSession() {
 // moment ago: a request that soon means the instance rejected it.
 async function answerTokenRequest() {
   try {
+    if (signingIn) {
+      const pending = signingIn;
+      signingIn = null;
+      session = await pending;
+    }
     const now = Date.now();
     const reusable = session && session.expires - now > 60000 && now - session.servedAt > 15000;
     if (!reusable) session = await openSession();

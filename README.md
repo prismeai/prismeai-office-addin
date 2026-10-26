@@ -133,8 +133,12 @@ taskpane.html
 taskpane.js
 tools/office.js  word.js  excel.js  powerpoint.js  outlook.js  index.js
 icons/icon-16.png  icon-32.png  icon-64.png  icon-80.png  icon-128.png
-vendor/msal-browser.min.js        (Microsoft's sign-in library, used by single sign-on only)
+popup-relay.html  popup-relay.js  auth-redirect.html
+vendor/msal-browser.min.js  msal-popup-relay.min.js  msal-redirect-bridge.min.js
 ```
+
+The last two lines are used by single sign-on only: Microsoft's sign-in
+library, and the sign-in windows of Office on the web.
 
 `npm run package` builds a zip containing exactly these files in `dist/`.
 
@@ -263,9 +267,13 @@ launch.
 ### Optional — Single sign-on
 
 With single sign-on, the add-in uses the Microsoft account the user is already
-signed in with in Office. There is no sign-in window: Office hands the add-in a
-Microsoft ID token, and your instance exchanges it for a Prisme.ai session for
-that user. The agent then runs with the user's own identity and permissions.
+signed in with in Office. In desktop Office there is no sign-in window: Office
+hands the add-in a Microsoft ID token. In Office on the web, clicking
+**Connect** opens a small Prisme.ai window: the user clicks **Continue**, and
+Microsoft's sign-in window opens (it closes by itself if the user is already
+signed in to Microsoft). Your instance exchanges the ID token for a
+Prisme.ai session for that user, and the agent runs with the user's own
+identity and permissions.
 
 **Requirements**
 
@@ -285,17 +293,21 @@ that user. The agent then runs with the user's own identity and permissions.
 
 Use the **same app registration** as the instance's SSO provider. Entra issues
 a different user identifier to each app registration, and your instance matches
-users on that identifier: a separate registration would not resolve to the same
-Prisme.ai accounts.
+users on that identifier first: with a separate registration, users would only
+be found by their email address.
 
 1. In the [Microsoft Entra admin center](https://entra.microsoft.com), open
    **App registrations** and select the application used by Prisme.ai SSO.
 2. Under **Authentication**, add the platform **Single-page application** with
-   this redirect URI — the task pane host, without `https://`:
+   these two redirect URIs — the task pane host, without `https://` for desktop
+   Office, and the sign-in landing page for Office on the web:
 
    ```
    brk-multihub://office.your-company.com
+   https://office.your-company.com/auth-redirect.html
    ```
+
+   They must be of type **Single-page application**, not **Web**.
 
 3. Under **API permissions**, confirm the Microsoft Graph delegated permission
    **User.Read** is present and grant admin consent, so users are not prompted.
@@ -514,7 +526,9 @@ for both manifests. See
 | "The Prisme.ai instance refused the sign-in" (SSO) | Token exchange not enabled, wrong provider slug, or issuer mismatch | Check **Allow Token Exchange**, the slug, and that the provider's issuer is exactly `https://login.microsoftonline.com/<tenant-id>/v2.0`. |
 | | The ID token comes from another app registration | Use the client ID of the app registration configured on the SSO provider. |
 | "This version of Office does not support single sign-on" | Office build without Nested App Authentication | Update Office, or use Office on the web. |
-| Microsoft shows an error about the redirect URI or the application (SSO) | The `brk-multihub://` redirect URI is missing or does not match the task pane host | Fix the Single-page application redirect URI on the app registration. |
+| Microsoft shows an error about the redirect URI or the application (SSO) | The `brk-multihub://` or `auth-redirect.html` redirect URI is missing, does not match the task pane host, or is declared under **Web** | Fix the Single-page application redirect URIs on the app registration. |
+| "Error opening popup window" (SSO, Office on the web) | The browser blocks the sign-in windows | Allow pop-ups for the Office site and the task pane host, then click **Connect** again. |
+| "Office.js did not load" (SSO) | `appsforoffice.microsoft.com` is blocked by a proxy or firewall | Open `https://appsforoffice.microsoft.com/lib/1/hosted/office.js` on the same device and allow it. |
 | Users are signed in but appear as new, empty accounts (SSO) | The client ID belongs to a different app registration than the SSO provider's, or the ID token has no `email` claim | Use the provider's app registration and add the optional claims. |
 | The connection form appears although the manifest was configured | The manifest was generated without `--agent` | Regenerate with the instance options and a higher `--version`. |
 | The agent does not know the document | Empty document, or content not loaded yet | Click in the document, then ask again. Context is refreshed when the selection changes. |
@@ -727,9 +741,17 @@ Layout:
   `sync`, a rejected PowerPoint batch, a host that stops answering) and counts
   what is pulled out of the document, so a test can check that a tool stays
   cheap on a large file, not only that its answer is right.
-- `vendor/msal-browser.min.js` — `@azure/msal-browser` 5.25.0, unmodified
-  (`lib/msal-browser.min.js` from the npm package; licence alongside). Loaded
-  only when single sign-on is enabled.
+- `vendor/` — `@azure/msal-browser` 5.26.0, unmodified: `lib/msal-browser.min.js`,
+  `lib/popup-relay/msal-popup-relay.min.js` and
+  `lib/redirect-bridge/msal-redirect-bridge.min.js` from the npm package, all
+  three of the same version (licence alongside). Loaded only when single
+  sign-on is enabled.
+- `popup-relay.html`, `popup-relay.js`, `auth-redirect.html` — sign-in on
+  Office on the web, where Office does not broker it. A popup opened by the
+  task pane's iframe cannot hand Microsoft's answer back (browsers partition
+  its storage, and Microsoft's pages isolate their opener), so MSAL opens the
+  relay page top-level, which opens Microsoft's window and relays the answer
+  to the pane. `auth-redirect.html` is the redirect URI of that window.
 - `PREREQUIS.md` — internal design notes (French).
 
 ## License
