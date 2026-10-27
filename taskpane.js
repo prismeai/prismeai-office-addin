@@ -262,7 +262,7 @@ function ownsToolCall({ name, contextId }) {
   // No way to tell the conversations apart: at least leave a tool of another
   // application to the pane of that application.
   const tool = Object.prototype.hasOwnProperty.call(TOOLS, name) ? TOOLS[name] : null;
-  return !(tool && tool.host && host && tool.host !== hostName());
+  return !(tool && tool.host && tool.host !== hostName());
 }
 
 window.addEventListener('message', (event) => {
