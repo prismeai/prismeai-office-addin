@@ -9,6 +9,9 @@ const CONTEXT_SLIDES = 12; // slides read for the ambient context
 const READ_SLIDES = 20; // slides per read
 const OUTLINE_SLIDES = 100; // titles per outline page
 const SEARCH_SLIDES = 40; // slides per round of a search
+const SHOW_SLIDE_MS = 4000; // time given to PowerPoint to bring a slide on screen
+const LOAD_RETRIES = 4; // reads after showing a slide that was not loaded
+const LOAD_RETRY_MS = 700;
 
 function shapeAt(ctx, ref) {
   return ctx.presentation.slides.getItemAt(ref.slide).shapes.getItem(ref.id);
@@ -138,6 +141,7 @@ async function readSlides(from, count, deadline, titlesOnly) {
   // for: a refusal then means the slide is not ready, not that it is empty.
   const refused = described ? candidates.filter((ref) => ref.refused).map((ref) => ref.slide) : [];
   const slides = [];
+  const unlisted = [];
   for (let i = from; i < stop; i++) {
     const slide = {
       slide: i + 1,
@@ -145,10 +149,14 @@ async function readSlides(from, count, deadline, titlesOnly) {
         .filter((ref) => ref.slide === i && typeof ref.text === 'string')
         .map((ref) => ({ id: ref.id, name: ref.name, kind: ref.kind || undefined, text: ref.text })),
     };
-    if (unread.includes(i) || refused.includes(i)) slide.incomplete = true;
+    // A slide with no shape at all: blank — or, far into a long deck, one that
+    // PowerPoint on the web has not loaded yet (it then lists nothing for it).
+    const listed = refs.some((ref) => ref.slide === i);
+    if (!listed) unlisted.push(i + 1);
+    if (unread.includes(i) || refused.includes(i) || !listed) slide.incomplete = true;
     slides.push(slide);
   }
-  return { total, end: stop, slides };
+  return { total, end: stop, slides, unlisted };
 }
 
 async function powerPointOutline({ from }) {
@@ -165,11 +173,43 @@ async function powerPointOutline({ from }) {
   };
 }
 
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Brings a slide on screen, which makes PowerPoint on the web load it and its
+// neighbours. Returns false when the host can't, or doesn't answer in time.
+async function showSlide(number) {
+  if (!Office.context.requirements.isSetSupported('PowerPointApi', '1.5')) return false;
+  officeStep = `opening slide ${number}`;
+  const shown = PowerPoint.run(async (ctx) => {
+    const slide = ctx.presentation.slides.getItemAt(number - 1);
+    slide.load('id');
+    await ctx.sync();
+    ctx.presentation.setSelectedSlides([slide.id]);
+    await ctx.sync();
+    return true;
+  }).catch((err) => {
+    toolDiag.showFailed = String((err && (err.code || err.message)) || err);
+    return false;
+  });
+  const ok = await Promise.race([shown, pause(SHOW_SLIDE_MS).then(() => false)]);
+  if (ok) toolDiag.shown = number;
+  return ok;
+}
+
 async function powerPointRead({ target }, maxChars = MAX_OUTPUT_CHARS) {
   const span = parseSpan(target, 'slide');
   const wanted = Math.min(span.to ? span.to - span.from + 1 : READ_SLIDES, READ_SLIDES);
-  const { total, slides } = await readSlides(span.from - 1, wanted, Date.now() + READ_BUDGET_MS);
+  const deadline = Date.now() + READ_BUDGET_MS;
+  let { total, slides, unlisted } = await readSlides(span.from - 1, wanted, deadline);
   if (span.from > total) throw new Error(`the presentation has ${total} slides`);
+  // Slides that came back with nothing: show the first one so PowerPoint loads
+  // that part of the deck, then read again, a few times at most.
+  if (unlisted.length && (await showSlide(unlisted[0]))) {
+    for (let attempt = 0; attempt < LOAD_RETRIES && unlisted.length && Date.now() < deadline; attempt++) {
+      await pause(LOAD_RETRY_MS);
+      ({ total, slides, unlisted } = await readSlides(span.from - 1, wanted, deadline));
+    }
+  }
   const out = [];
   let chars = 0;
   for (const slide of slides) {
