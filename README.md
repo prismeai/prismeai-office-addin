@@ -524,6 +524,7 @@ for both manifests. See
 | A tool fails with "unknown tool" or "Tool not found" | The task pane files and the `office-mcp` workspace are not from the same version | Update both: the files on the task pane host, and the workspace on the instance. |
 | "No Office add-in attached" | The pane was closed, reloaded or still loading when the tool was called | Open the pane, wait for the chat, and ask again. |
 | PowerPoint slides come back flagged `incomplete`, or a read is slow, right after opening a long presentation | PowerPoint on the web is still loading the far slides | Ask again a moment later. |
+| PowerPoint on the web shows another slide for a moment while the agent reads | The read brings a slide PowerPoint has not loaded yet on screen, so that it loads | Nothing to do: the slides the user had selected are selected back once the read is done. |
 | Users still see an old version after an update | Office cached the manifest or the pane | Check the manifest version was raised. Then [clear the Office cache](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/clear-cache) on the device. |
 | A new conversation starts every time the pane is opened | The chat runs in a third-party iframe, and browsers isolate or clear its storage | Can happen in this version, depending on the browser or webview. |
 
@@ -670,8 +671,14 @@ only refreshed when the agent is saved.
   number; the user has to name the slide ("slide 12").
 - **PowerPoint: a long presentation that was just opened is read slowly at
   first.** For a few minutes PowerPoint on the web can refuse the text of the
-  far slides (observed past slide 100 of a 150-slide deck). Those slides come
-  back flagged `incomplete` and read normally a moment later.
+  far slides (observed past slide 100 of a 150-slide deck), or list no shape
+  at all for them. In the second case, a read or an outline brings the first
+  such slide on screen for a moment (PowerPointApi 1.5) so that PowerPoint
+  loads it, reads again, then selects the user's slides back. Slides still not
+  loaded come back flagged `incomplete` and read normally a moment later.
+- **PowerPoint on the web: a blank slide looks like a slide not loaded yet.**
+  It is flagged `incomplete` too, and a read that covers it takes about
+  1.5 s more. Desktop clients load every slide: a blank slide is just blank.
 - **The tools have been tested on Office on the web.** The desktop clients load the same code;
   pilot them before a rollout ([Step 4](#step-4--pilot-with-one-user)).
 - **Word paragraph numbers shift when paragraphs are inserted or deleted**:

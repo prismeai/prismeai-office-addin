@@ -54,6 +54,9 @@ let toolDiag = {};
 
 const given = (value) => value !== undefined && value !== null;
 
+// What an Office.js error says, for the debug figures.
+const errorCode = (err) => String((err && (err.code || err.message)) || err || '');
+
 // "p:12" / "p:12-40" → { from: 12, to: 40 | null }, 1-based. No target = from the start.
 function parseSpan(target, prefix) {
   if (!given(target) || target === '') return { from: 1, to: null };
