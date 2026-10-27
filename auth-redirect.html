@@ -2,12 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Anyone can open this page from a crafted link: no inline script, so no javascript: URL runs here. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'" />
     <title>Prisme.ai</title>
   </head>
   <!-- Redirect URI of the Microsoft sign-in window (Office on the web): hands
        Microsoft's answer to the sign-in relay (popup-relay.html) and closes. -->
   <body>
     <script src="vendor/msal-redirect-bridge.min.js"></script>
-    <script>msalRedirectBridge.broadcastResponseToMainFrame();</script>
+    <script src="auth-redirect.js"></script>
   </body>
 </html>

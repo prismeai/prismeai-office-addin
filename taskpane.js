@@ -142,7 +142,11 @@ function readForm() {
 }
 
 function toggleSsoFields() {
-  els.sso.classList.toggle('hidden', els.auth.value !== 'sso');
+  const sso = els.auth.value === 'sso';
+  els.sso.classList.toggle('hidden', !sso);
+  // Ahead of Connect: on the web, the click only lets a popup open for a few
+  // seconds, and MSAL takes part of them to load.
+  if (sso) loadMsal().catch(() => {});
 }
 
 // window.alert is blocked in Office webviews → inline error.
@@ -172,8 +176,8 @@ function connect() {
   // the chat asks for its token, the popup of Office on the web is blocked.
   if (cfg.auth === 'sso') {
     session = null;
-    signingIn = openSession();
-    signingIn.catch(() => {}); // reported by answerTokenRequest
+    opening = openSession();
+    opening.catch(() => {}); // reported by answerTokenRequest
   }
   loadChat();
   els.config.classList.add('hidden');
@@ -301,8 +305,10 @@ window.addEventListener('message', (event) => {
 // (POST /login/token-exchange). The token's audience is the Entra app: the
 // instance only accepts its SSO provider's client ID or token-exchange audiences.
 let msalApp = null;
+let msalFor = ''; // client and tenant msalApp was made for
+let msalScript = null;
 let session = null; // { token, expires (epoch ms), servedAt (epoch ms) }
-let signingIn = null; // sign-in started by the Connect click, not yet handed to the chat
+let opening = null; // session being opened, by the Connect click or a token request
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -314,6 +320,18 @@ function loadScript(src) {
   });
 }
 
+// Vendored (Microsoft no longer serves MSAL from a CDN) and only loaded when
+// SSO is on. Loaded once; tried again after a failure.
+function loadMsal() {
+  msalScript =
+    msalScript ||
+    loadScript('vendor/msal-browser.min.js').catch((err) => {
+      msalScript = null;
+      throw err;
+    });
+  return msalScript;
+}
+
 async function entraIdToken() {
   if (!window.Office) {
     throw new Error('Office.js did not load: check that appsforoffice.microsoft.com is reachable from this device.');
@@ -322,10 +340,9 @@ async function entraIdToken() {
   if (!Office.context.requirements.isSetSupported('NestedAppAuth', '1.1')) {
     throw new Error('This version of Office does not support single sign-on. Update Office and try again.');
   }
-  if (!msalApp) {
-    // Vendored (Microsoft no longer serves MSAL from a CDN) and only loaded
-    // when SSO is on.
-    if (!window.msal) await loadScript('vendor/msal-browser.min.js');
+  const app = cfg.ssoClient + '|' + cfg.ssoTenant;
+  if (!msalApp || msalFor !== app) {
+    await loadMsal();
     msalApp = await window.msal.createNestablePublicClientApplication({
       auth: {
         clientId: cfg.ssoClient,
@@ -339,6 +356,7 @@ async function entraIdToken() {
       // Time to click Continue in the relay, then sign in (default 60 s).
       system: { popupBridgeTimeout: 300000 },
     });
+    msalFor = app;
   }
   // Without an account, the silent call of Office on the web always fails.
   const request = { scopes: ['User.Read', 'openid', 'profile'], account: msalApp.getAllAccounts()[0] };
@@ -388,14 +406,18 @@ async function openSession() {
 // moment ago: a request that soon means the instance rejected it.
 async function answerTokenRequest() {
   try {
-    if (signingIn) {
-      const pending = signingIn;
-      signingIn = null;
-      session = await pending;
-    }
     const now = Date.now();
     const reusable = session && session.expires - now > 60000 && now - session.servedAt > 15000;
-    if (!reusable) session = await openSession();
+    if (!reusable) {
+      // A request while a sign-in is under way waits for it: started again
+      // here, outside the click, its popup would be blocked.
+      const pending = opening || (opening = openSession());
+      try {
+        session = await pending;
+      } finally {
+        if (opening === pending) opening = null;
+      }
+    }
     session.servedAt = Date.now();
     postToFrame({ type: 'token', token: session.token });
   } catch (err) {
