@@ -472,7 +472,7 @@ function fakePowerPoint(deck, env) {
 }
 
 // ── The pane ────────────────────────────────────────────────────────────────
-// loadPane({ host, word | excel | powerpoint | mail, selection, msPerSync, debug, options })
+// loadPane({ host, platform, word | excel | powerpoint | mail, selection, msPerSync, debug, options })
 export function loadPane(setup = {}) {
   const env = {
     options: setup.options || {},
@@ -535,11 +535,13 @@ export function loadPane(setup = {}) {
     },
     Office: {
       HostType: HOSTS,
+      PlatformType: { OfficeOnline: 'OfficeOnline', PC: 'PC', Mac: 'Mac' },
       AsyncResultStatus: { Succeeded: 'succeeded', Failed: 'failed' },
       CoercionType: { Text: 'text', SlideRange: 'slideRange' },
       EventType: { DocumentSelectionChanged: 'selection', ItemChanged: 'item' },
       onReady: (callback) => callback({ host: setup.host || null }),
       context: {
+        platform: setup.platform || 'OfficeOnline',
         requirements: { isSetSupported: () => !env.options.oldHost },
         document: {
           url: setup.url || 'https://files.test/docs/Report.docx?web=1',

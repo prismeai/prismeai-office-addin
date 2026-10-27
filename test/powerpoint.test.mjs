@@ -179,6 +179,16 @@ test('a slide PowerPoint has not finished loading is flagged, never shown as emp
   assert.equal(found.incomplete, undefined);
 });
 
+test('outside PowerPoint on the web, a slide without shapes is blank, not loading', async () => {
+  const model = deck(5, { pictures: false });
+  model.slides[1].shapes = [];
+  const reply = await powerpoint(model, { platform: 'PC', debug: true }).call('office_read', { target: 'slide:1-5' });
+  assert.deepEqual(reply.result.slides[1], { slide: 2, shapes: [] });
+  assert.equal(reply.result.slides.some((slide) => slide.incomplete), false);
+  assert.equal(reply.result.diag.shown, undefined, 'no slide is brought on screen');
+  assert.equal(reply.result.diag.showFailed, undefined);
+});
+
 test('pictures and charts never make a slide look incomplete', async () => {
   const withInfo = await powerpoint(deck(24)).exec('office_read', { target: 'slide:1-20' });
   assert.equal(withInfo.slides.some((slide) => slide.incomplete), false);
