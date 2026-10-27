@@ -256,6 +256,9 @@ function ownsToolCall({ name, contextId }) {
   if (conversation.id !== null && contextId) {
     return bareId(contextId) === bareId(conversation.id);
   }
+  // Outside Office (the page opened in a browser tab) the pane has no document:
+  // a call it cannot tie to its own conversation belongs to a pane that has one.
+  if (!host) return false;
   // No way to tell the conversations apart: at least leave a tool of another
   // application to the pane of that application.
   const tool = Object.prototype.hasOwnProperty.call(TOOLS, name) ? TOOLS[name] : null;
@@ -460,6 +463,7 @@ function handleToolExec({ correlationId, name, args }) {
   };
   // `waited`: time spent behind another Office task before this one started.
   const figures = () => ({
+    pane: (host && hostName()) || 'outside Office',
     ms: Date.now() - started,
     waited: started - arrived,
     conversation: conversation.reported ? conversation.id || 'none yet' : 'not reported',
