@@ -361,8 +361,20 @@ function fakeExcel(book, env) {
 // ── PowerPoint ──────────────────────────────────────────────────────────────
 // deck.slides: [{ shapes: [{ id, name, type, kind?, contained?, text }] }]
 // `text: null` = a shape without a text frame (picture, chart, table…).
+// options.unlisted: slide numbers PowerPoint on the web has not loaded yet —
+// they list no shape until a slide is brought on screen.
+// options.onScreen: the slide the user has selected.
 function fakePowerPoint(deck, env) {
   const stats = env.stats;
+  const ids = new WeakMap();
+  let lastId = 255;
+  const slideId = (slide) => {
+    if (!ids.has(slide)) ids.set(slide, String(++lastId));
+    return ids.get(slide);
+  };
+  const numberOf = (id) => deck.slides.findIndex((slide) => slideId(slide) === id) + 1;
+  let selection = env.options.onScreen ? [slideId(deck.slides[env.options.onScreen - 1])] : [];
+  env.onScreen = () => selection.map(numberOf);
   const context = () => {
     let broken = false;
     let placeholderLoads = 0;
@@ -407,6 +419,10 @@ function fakePowerPoint(deck, env) {
     });
 
     const slideProxy = (index) => ({
+      load() {},
+      get id() {
+        return slideId(deck.slides[index]);
+      },
       shapes: {
         load() {
           edits.push(() => {
@@ -415,6 +431,7 @@ function fakePowerPoint(deck, env) {
           });
         },
         get items() {
+          if ((env.options.unlisted || []).includes(index + 1)) return [];
           return deck.slides[index].shapes.map((shape) => shapeProxy(shape, index));
         },
         getItem: (id) => shapeProxy(deck.slides[index].shapes.find((shape) => shape.id === id), index),
@@ -441,6 +458,21 @@ function fakePowerPoint(deck, env) {
             return count;
           },
           getItemAt: slideProxy,
+        },
+        getSelectedSlides() {
+          const selected = { items: [], load() {} };
+          edits.push(() => {
+            selected.items = selection.map((id) => ({ id }));
+          });
+          return selected;
+        },
+        setSelectedSlides(slideIds) {
+          edits.push(() => {
+            selection = [...slideIds];
+            stats.selections.push([...slideIds].map(numberOf));
+            // A slide on screen makes the host load that part of the deck.
+            env.options.unlisted = [];
+          });
         },
       },
       async sync() {
@@ -476,7 +508,7 @@ function fakePowerPoint(deck, env) {
 export function loadPane(setup = {}) {
   const env = {
     options: setup.options || {},
-    stats: { syncs: 0, paragraphsSent: 0, charsSent: 0, cellsSent: 0, largestRead: 0, textsSent: 0, shapesListed: 0 },
+    stats: { syncs: 0, paragraphsSent: 0, charsSent: 0, cellsSent: 0, largestRead: 0, textsSent: 0, shapesListed: 0, selections: [] },
     now: 1700000000000,
     roundTrip() {
       env.stats.syncs++;
@@ -599,6 +631,8 @@ export function loadPane(setup = {}) {
       listeners.forEach((listener) => listener({ origin, data: { source: 'prisme-embed-frame', ...message } }));
     },
     results: () => sent.filter((message) => message.type === 'tool-result').map(plain),
+    // The slides selected in PowerPoint, by number.
+    onScreen: () => env.onScreen(),
     // Moves the clock forward and fires the timers that are due.
     elapse(ms) {
       env.now += ms;

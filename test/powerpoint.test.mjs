@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadPane } from './harness.mjs';
+import { loadPane, settle } from './harness.mjs';
 
 // A deck the way templates build them: a title and a body placeholder, the
 // footer placeholders, and now and then a picture or a chart (no text frame).
@@ -177,6 +177,73 @@ test('a slide PowerPoint has not finished loading is flagged, never shown as emp
   const found = await pane.exec('office_search', { query: 'target' });
   assert.deepEqual(found.results.map((hit) => hit.at), ['slide:5']);
   assert.equal(found.incomplete, undefined);
+});
+
+// A call that waits on the pane's timers (the pauses between two reads).
+async function pumped(pane, running) {
+  let settled = false;
+  running.finally(() => {
+    settled = true;
+  });
+  for (let guard = 0; !settled && guard < 100; guard++) {
+    await settle();
+    pane.elapse(pane.get('LOAD_RETRY_MS'));
+  }
+  return running;
+}
+
+test('far slides PowerPoint on the web has not loaded are brought on screen, read, and the user is put back', async () => {
+  const model = deck(150, { pictures: false });
+  const pane = powerpoint(model, { options: { unlisted: [141, 142, 143, 144, 145, 146, 147, 148, 149, 150], onScreen: 3 }, debug: true });
+  const reply = await pumped(pane, pane.call('office_read', { target: 'slide:141-150' }));
+  assert.deepEqual(reply.result.slides.map((slide) => slide.shapes.map((shape) => shape.text)), textOf(model).slice(140));
+  assert.equal(reply.result.slides.some((slide) => slide.incomplete), false);
+  assert.deepEqual(pane.stats.selections, [[141], [3]], 'shown, then the user\'s slide again');
+  assert.deepEqual(pane.onScreen(), [3]);
+  assert.equal(reply.result.diag.rereads, 1);
+});
+
+test('the outline loads the far slides the same way', async () => {
+  const model = deck(150, { pictures: false });
+  const unlisted = Array.from({ length: 50 }, (_, i) => 101 + i);
+  const pane = powerpoint(model, { options: { unlisted, onScreen: 1 } });
+  const outline = await pumped(pane, pane.exec('office_outline', { from: 'slide:101' }));
+  assert.equal(outline.titles.length, 50);
+  assert.equal(outline.titles.some((entry) => entry.incomplete), false);
+  assert.equal(outline.titles[49].title, 'SLIDE-150 Title');
+  assert.deepEqual(pane.onScreen(), [1]);
+});
+
+test('on the web, a blank slide is shown once and read again twice at most', async () => {
+  const model = deck(6, { pictures: false });
+  model.slides[3].shapes = [];
+  const pane = powerpoint(model, { options: { onScreen: 2 }, debug: true });
+  const reply = await pumped(pane, pane.call('office_read', { target: 'slide:1-6' }));
+  assert.equal(reply.result.slides.length, 6, 'no slide lost');
+  assert.deepEqual(reply.result.slides.filter((slide) => slide.incomplete).map((slide) => slide.slide), [4]);
+  assert.equal(reply.result.diag.rereads, 2);
+  assert.deepEqual(pane.stats.selections, [[4], [2]]);
+});
+
+test('a reading again that runs out of time keeps the fuller first read', async () => {
+  const model = deck(10, { pictures: false });
+  const pane = powerpoint(model, { options: { unlisted: [8, 9], onScreen: 1 }, msPerSync: 2000, debug: true });
+  const reply = await pumped(pane, pane.call('office_read', { target: 'slide:1-10' }));
+  assert.equal(reply.result.diag.rereads, 1, 'read again once, out of time');
+  assert.equal(reply.result.slides.length, 10);
+  assert.deepEqual(reply.result.slides.filter((slide) => slide.incomplete).map((slide) => slide.slide), [8, 9]);
+  const expected = textOf(model);
+  reply.result.slides.filter((slide) => !slide.incomplete).forEach((slide) => {
+    assert.deepEqual(slide.shapes.map((shape) => shape.text), expected[slide.slide - 1]);
+  });
+  assert.deepEqual(pane.onScreen(), [1]);
+});
+
+test('a slide is not brought on screen when the read has no time left for it', async () => {
+  const pane = powerpoint(deck(10, { pictures: false }), { options: { unlisted: [10], onScreen: 1 }, msPerSync: 3000 });
+  const page = await pumped(pane, pane.exec('office_read', { target: 'slide:1-10' }));
+  assert.equal(page.slides.length, 10);
+  assert.deepEqual(pane.stats.selections, []);
 });
 
 test('outside PowerPoint on the web, a slide without shapes is blank, not loading', async () => {

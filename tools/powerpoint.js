@@ -100,7 +100,7 @@ async function readTexts(refs, deadline) {
       const failed = (toolDiag.failed = toolDiag.failed || []);
       if (failed.length < 12) {
         const [ref] = refs;
-        failed.push({ slide: ref.slide + 1, id: ref.id, type: ref.type, kind: ref.kind, error: (err && (err.code || err.message)) || '' });
+        failed.push({ slide: ref.slide + 1, id: ref.id, type: ref.type, kind: ref.kind, error: errorCode(err) });
       }
       return;
     }
@@ -162,9 +162,78 @@ async function readSlides(from, count, deadline, titlesOnly) {
   return { total, end: stop, slides, unlisted };
 }
 
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Brings a slide on screen, which makes PowerPoint on the web load it and its
+// neighbours. Returns the ids of the slides the user had selected, or null
+// when the host can't, or doesn't answer in time.
+async function showSlide(number) {
+  if (!Office.context.requirements.isSetSupported('PowerPointApi', '1.5')) return null;
+  officeStep = `opening slide ${number}`;
+  const diag = toolDiag; // the call this belongs to, even if PowerPoint answers late
+  let late = false;
+  const shown = PowerPoint.run(async (ctx) => {
+    const selected = ctx.presentation.getSelectedSlides();
+    selected.load('items/id');
+    const slide = ctx.presentation.slides.getItemAt(number - 1);
+    slide.load('id');
+    await ctx.sync();
+    // The read gave up on this slide: the view must not jump after it.
+    if (late) return null;
+    const before = selected.items.map((item) => item.id);
+    ctx.presentation.setSelectedSlides([slide.id]);
+    await ctx.sync();
+    return before;
+  }).catch((err) => {
+    diag.showFailed = errorCode(err);
+    return null;
+  });
+  const timeout = pause(SHOW_SLIDE_MS).then(() => {
+    late = true;
+    return null;
+  });
+  const before = await Promise.race([shown, timeout]);
+  if (before) diag.shown = number;
+  return before;
+}
+
+// readSlides, and when PowerPoint on the web has not loaded some of these
+// slides: show the first one so it loads that part of the deck, then read
+// again a few times, within the budget. The user's selection is put back.
+async function readLoadedSlides(from, count, deadline, titlesOnly) {
+  let read = await readSlides(from, count, deadline, titlesOnly);
+  if (!read.unlisted.length || Date.now() + SHOW_SLIDE_MS > deadline) return read;
+  const before = await showSlide(read.unlisted[0]);
+  if (!before) return read;
+  try {
+    for (let attempt = 0; attempt < LOAD_RETRIES && read.unlisted.length && Date.now() + LOAD_RETRY_MS < deadline; attempt++) {
+      await pause(LOAD_RETRY_MS);
+      toolDiag.rereads = attempt + 1;
+      const again = await readSlides(from, count, deadline, titlesOnly);
+      // Out of time halfway: the first read covers more.
+      if (again.slides.length < read.slides.length) break;
+      const progressed = again.unlisted.length < read.unlisted.length;
+      read = again;
+      // Nothing more loads: what is left is blank.
+      if (!progressed && attempt > 0) break;
+    }
+  } finally {
+    if (before.length) {
+      officeStep = 'selecting the slide back';
+      await PowerPoint.run(async (ctx) => {
+        ctx.presentation.setSelectedSlides(before);
+        await ctx.sync();
+      }).catch((err) => {
+        toolDiag.restoreFailed = errorCode(err);
+      });
+    }
+  }
+  return read;
+}
+
 async function powerPointOutline({ from }) {
   const start = parseSpan(from, 'slide').from;
-  const { total, end, slides } = await readSlides(start - 1, OUTLINE_SLIDES, Date.now() + READ_BUDGET_MS, true);
+  const { total, end, slides } = await readLoadedSlides(start - 1, OUTLINE_SLIDES, Date.now() + READ_BUDGET_MS, true);
   return {
     slides: total,
     titles: slides.map((slide) => ({
@@ -176,43 +245,11 @@ async function powerPointOutline({ from }) {
   };
 }
 
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Brings a slide on screen, which makes PowerPoint on the web load it and its
-// neighbours. Returns false when the host can't, or doesn't answer in time.
-async function showSlide(number) {
-  if (!Office.context.requirements.isSetSupported('PowerPointApi', '1.5')) return false;
-  officeStep = `opening slide ${number}`;
-  const shown = PowerPoint.run(async (ctx) => {
-    const slide = ctx.presentation.slides.getItemAt(number - 1);
-    slide.load('id');
-    await ctx.sync();
-    ctx.presentation.setSelectedSlides([slide.id]);
-    await ctx.sync();
-    return true;
-  }).catch((err) => {
-    toolDiag.showFailed = String((err && (err.code || err.message)) || err);
-    return false;
-  });
-  const ok = await Promise.race([shown, pause(SHOW_SLIDE_MS).then(() => false)]);
-  if (ok) toolDiag.shown = number;
-  return ok;
-}
-
 async function powerPointRead({ target }, maxChars = MAX_OUTPUT_CHARS) {
   const span = parseSpan(target, 'slide');
   const wanted = Math.min(span.to ? span.to - span.from + 1 : READ_SLIDES, READ_SLIDES);
-  const deadline = Date.now() + READ_BUDGET_MS;
-  let { total, slides, unlisted } = await readSlides(span.from - 1, wanted, deadline);
+  const { total, slides } = await readLoadedSlides(span.from - 1, wanted, Date.now() + READ_BUDGET_MS);
   if (span.from > total) throw new Error(`the presentation has ${total} slides`);
-  // Slides that came back with nothing: show the first one so PowerPoint loads
-  // that part of the deck, then read again, a few times at most.
-  if (unlisted.length && (await showSlide(unlisted[0]))) {
-    for (let attempt = 0; attempt < LOAD_RETRIES && unlisted.length && Date.now() < deadline; attempt++) {
-      await pause(LOAD_RETRY_MS);
-      ({ total, slides, unlisted } = await readSlides(span.from - 1, wanted, deadline));
-    }
-  }
   const out = [];
   let chars = 0;
   for (const slide of slides) {
