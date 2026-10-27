@@ -13,6 +13,8 @@ const SHOW_SLIDE_MS = 4000; // time given to PowerPoint to bring a slide on scre
 const LOAD_RETRIES = 4; // reads after showing a slide that was not loaded
 const LOAD_RETRY_MS = 700;
 
+const lazyHost = () => Office.context.platform === Office.PlatformType.OfficeOnline;
+
 function shapeAt(ctx, ref) {
   return ctx.presentation.slides.getItemAt(ref.slide).shapes.getItem(ref.id);
 }
@@ -151,9 +153,10 @@ async function readSlides(from, count, deadline, titlesOnly) {
     };
     // A slide with no shape at all: blank — or, far into a long deck, one that
     // PowerPoint on the web has not loaded yet (it then lists nothing for it).
-    const listed = refs.some((ref) => ref.slide === i);
-    if (!listed) unlisted.push(i + 1);
-    if (unread.includes(i) || refused.includes(i) || !listed) slide.incomplete = true;
+    // Only the web loads slides that late: anywhere else such a slide is blank.
+    const notLoaded = lazyHost() && !refs.some((ref) => ref.slide === i);
+    if (notLoaded) unlisted.push(i + 1);
+    if (unread.includes(i) || refused.includes(i) || notLoaded) slide.incomplete = true;
     slides.push(slide);
   }
   return { total, end: stop, slides, unlisted };
