@@ -148,6 +148,20 @@ test('a call without a conversation id is answered, as before', async () => {
   assert.equal(pane.results().length, 1);
 });
 
+test('a pane opened outside Office leaves to the Office panes the calls it cannot tie to its conversation', async () => {
+  const panes = { browser: loadPane({}), word: word() };
+  for (const pane of Object.values(panes)) call(pane, 'office_read', 'ctx_word');
+  await settle();
+  assert.deepEqual(panes.browser.results(), [], 'no document: it must not beat the Word pane');
+  assert.equal(panes.word.results().length, 1);
+
+  // Its own conversation is still its own.
+  conversation(panes.browser, 'ctx_browser');
+  call(panes.browser, 'office_read', 'ctx_browser', {}, 'mine');
+  await settle();
+  assert.deepEqual(panes.browser.results().map((message) => message.correlationId), ['mine']);
+});
+
 test('messages that do not come from the chat frame are ignored', async () => {
   const pane = word();
   conversation(pane, 'ctx_word');
