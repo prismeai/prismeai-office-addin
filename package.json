@@ -5,12 +5,12 @@
   "license": "MIT",
   "description": "Chat with a Prisme.ai agent that always knows the document you have open (Word, Excel, PowerPoint, Outlook).",
   "scripts": {
-    "check": "for f in taskpane.js popup-relay.js tools/*.js scripts/manifest.mjs; do node --check \"$f\" || exit 1; done",
+    "check": "for f in taskpane.js popup-relay.js auth-redirect.js tools/*.js scripts/manifest.mjs; do node --check \"$f\" || exit 1; done",
     "test": "node --test test/*.test.mjs",
     "manifest": "node scripts/manifest.mjs",
     "validate": "npx --yes office-addin-manifest validate dist/manifest.xml && npx --yes office-addin-manifest validate dist/manifest-outlook.xml",
     "certs": "npx --yes office-addin-dev-certs install",
     "serve": "npx --yes http-server . -S -C ~/.office-addin-dev-certs/localhost.crt -K ~/.office-addin-dev-certs/localhost.key -p 3100 -c-1",
-    "package": "mkdir -p dist && rm -f \"dist/prismeai-office-addin-$npm_package_version.zip\" && zip -r -X \"dist/prismeai-office-addin-$npm_package_version.zip\" taskpane.html taskpane.js auth-redirect.html popup-relay.html popup-relay.js tools icons vendor -x '*.DS_Store' '*.svg'"
+    "package": "mkdir -p dist && rm -f \"dist/prismeai-office-addin-$npm_package_version.zip\" && zip -r -X \"dist/prismeai-office-addin-$npm_package_version.zip\" taskpane.html taskpane.js auth-redirect.html auth-redirect.js popup-relay.html popup-relay.js tools icons vendor -x '*.DS_Store' '*.svg'"
   }
 }

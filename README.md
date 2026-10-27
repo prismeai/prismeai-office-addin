@@ -133,7 +133,7 @@ taskpane.html
 taskpane.js
 tools/office.js  word.js  excel.js  powerpoint.js  outlook.js  index.js
 icons/icon-16.png  icon-32.png  icon-64.png  icon-80.png  icon-128.png
-popup-relay.html  popup-relay.js  auth-redirect.html
+popup-relay.html  popup-relay.js  auth-redirect.html  auth-redirect.js
 vendor/msal-browser.min.js  msal-popup-relay.min.js  msal-redirect-bridge.min.js
 ```
 
@@ -747,7 +747,7 @@ Layout:
   `lib/redirect-bridge/msal-redirect-bridge.min.js` from the npm package, all
   three of the same version (licence alongside). Loaded only when single
   sign-on is enabled.
-- `popup-relay.html`, `popup-relay.js`, `auth-redirect.html` — sign-in on
+- `popup-relay.html`, `popup-relay.js`, `auth-redirect.html`, `auth-redirect.js` — sign-in on
   Office on the web, where Office does not broker it. A popup opened by the
   task pane's iframe cannot hand Microsoft's answer back (browsers partition
   its storage, and Microsoft's pages isolate their opener), so MSAL opens the
