@@ -270,8 +270,10 @@ that user. The agent then runs with the user's own identity and permissions.
 **Requirements**
 
 - Your instance signs users in with **Microsoft Entra ID** through an **OIDC**
-  SSO provider. Other identity providers and SAML are not supported by this
-  mode.
+  SSO provider, declared in AI Governance or in the api-gateway's
+  `authProviders.config.yml`. Other identity providers, SAML, and the Azure
+  sign-in configured through the api-gateway's `AZURE_AD_*` environment
+  variables are not supported by this mode.
 - A Prisme.ai version that provides the token exchange endpoint
   (`POST /v2/login/token-exchange`) and the **Allow Token Exchange** option on
   SSO providers.
@@ -304,17 +306,27 @@ Prisme.ai accounts.
 
 **2. Prisme.ai — allow token exchange on the SSO provider**
 
-In the console, open the SSO provider (AI Governance → SSO):
+Open the SSO provider where it is declared: in the console (AI Governance →
+SSO), or in the api-gateway's `authProviders.config.yml`, under the provider's
+`config`. A change to the file takes effect when the api-gateway restarts.
 
-1. Check that **Issuer** is `https://login.microsoftonline.com/<tenant-id>/v2.0`,
-   with your tenant ID. This is the issuer of the ID tokens the add-in obtains.
-   If your provider is configured with a different issuer (for example the
-   older `https://sts.windows.net/<tenant-id>/`), do not change it on a
-   production instance without testing web sign-in first: contact Prisme.ai.
-2. Turn on **Allow Token Exchange**.
-3. Leave the token exchange audiences empty: the provider's own client ID is
-   accepted, which is the app registration above.
-4. Note the provider's **slug**.
+1. Check that the issuer (**Issuer** in the console, `issuer` in the file) is
+   `https://login.microsoftonline.com/<tenant-id>/v2.0`, with your tenant ID.
+   This is the issuer of the ID tokens the add-in obtains. If your provider is
+   configured with a different issuer (for example the older
+   `https://sts.windows.net/<tenant-id>/`), do not change it on a production
+   instance without testing web sign-in first: contact Prisme.ai.
+2. Turn on **Allow Token Exchange** (`allowTokenExchange: true` in the file).
+   The issuer is then required: in the console the provider cannot be saved
+   without it, and a provider in the file is skipped at startup, which also
+   stops web sign-in through it.
+3. Leave the token exchange audiences empty (no `tokenExchangeAudiences` in the
+   file): the provider's own client ID is accepted, which is the app
+   registration above.
+4. Note the provider's **slug** (in the file, its key under `providers:`).
+
+See [Token Exchange](https://docs.prisme.ai/self-hosting/entreprise/authentication#token-exchange-headless-clients)
+in the Prisme.ai documentation.
 
 **3. API gateway — allow the task pane host to call the API**
 
