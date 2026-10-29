@@ -364,6 +364,7 @@ function fakeExcel(book, env) {
 // options.unlisted: slide numbers PowerPoint on the web has not loaded yet —
 // they list no shape until a slide is brought on screen.
 // options.onScreen: the slide the user has selected.
+// options.slowSelect: a promise the next selection waits on before PowerPoint answers.
 function fakePowerPoint(deck, env) {
   const stats = env.stats;
   const ids = new WeakMap();
@@ -377,6 +378,7 @@ function fakePowerPoint(deck, env) {
   env.onScreen = () => selection.map(numberOf);
   const context = () => {
     let broken = false;
+    let selecting = false;
     let placeholderLoads = 0;
     const textLoads = [];
     const counts = [];
@@ -467,6 +469,7 @@ function fakePowerPoint(deck, env) {
           return selected;
         },
         setSelectedSlides(slideIds) {
+          selecting = true;
           edits.push(() => {
             selection = [...slideIds];
             stats.selections.push([...slideIds].map(numberOf));
@@ -477,6 +480,12 @@ function fakePowerPoint(deck, env) {
       },
       async sync() {
         env.roundTrip();
+        if (selecting && env.options.slowSelect) {
+          const answer = env.options.slowSelect;
+          env.options.slowSelect = null;
+          await answer;
+        }
+        selecting = false;
         // What a failed batch leaves behind can't be synced again.
         if (broken) throw new Error("Cannot read properties of null (reading 'statement')");
         const fail = (message) => {
