@@ -183,6 +183,12 @@ async function showSlide(number) {
     const before = selected.items.map((item) => item.id);
     ctx.presentation.setSelectedSlides([slide.id]);
     await ctx.sync();
+    if (late && before.length) {
+      // Shown after the read gave up on it: nobody else will put the user back.
+      ctx.presentation.setSelectedSlides(before);
+      await ctx.sync();
+      return null;
+    }
     return before;
   }).catch((err) => {
     diag.showFailed = errorCode(err);

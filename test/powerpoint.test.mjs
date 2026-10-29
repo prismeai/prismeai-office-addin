@@ -246,6 +246,20 @@ test('a slide is not brought on screen when the read has no time left for it', a
   assert.deepEqual(pane.stats.selections, []);
 });
 
+test('a slide PowerPoint shows after the read gave up on it does not keep the view', async () => {
+  let answer;
+  const slowSelect = new Promise((resolve) => {
+    answer = resolve;
+  });
+  const pane = powerpoint(deck(150, { pictures: false }), { options: { unlisted: [141], onScreen: 3, slowSelect } });
+  const page = await pumped(pane, pane.exec('office_read', { target: 'slide:141' }));
+  assert.equal(page.slides[0].incomplete, true, 'read without the slide on screen');
+  answer();
+  await settle();
+  assert.deepEqual(pane.stats.selections, [[141], [3]]);
+  assert.deepEqual(pane.onScreen(), [3]);
+});
+
 test('outside PowerPoint on the web, a slide without shapes is blank, not loading', async () => {
   const model = deck(5, { pictures: false });
   model.slides[1].shapes = [];
