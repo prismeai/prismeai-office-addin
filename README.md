@@ -278,11 +278,17 @@ identity and permissions.
 
 **Requirements**
 
-- Your instance signs users in with **Microsoft Entra ID** through an **OIDC**
-  SSO provider, declared in AI Governance or in the api-gateway's
-  `authProviders.config.yml`. Other identity providers, SAML, and the Azure
-  sign-in configured through the api-gateway's `AZURE_AD_*` environment
-  variables are not supported by this mode.
+- Your instance has an **OIDC** SSO provider that points at **Microsoft Entra
+  ID**, in the tenant your users sign in to Office with. It is declared in AI
+  Governance or in the api-gateway's `authProviders.config.yml`. If users sign
+  in to your instance another way (another identity provider, even one that
+  federates Entra ID, SAML, or the Azure sign-in configured through the
+  api-gateway's `AZURE_AD_*` environment variables), add a provider for the
+  add-in: see
+  [If your instance does not sign in with Entra ID](#if-your-instance-does-not-sign-in-with-entra-id).
+- The **api-gateway** can reach `https://login.microsoftonline.com`, directly or
+  through a proxy: it downloads Entra ID's signing keys from there to check the
+  tokens the add-in sends.
 - A Prisme.ai version that provides the token exchange endpoint
   (`POST /v2/login/token-exchange`) and the **Allow Token Exchange** option on
   SSO providers.
@@ -295,7 +301,9 @@ identity and permissions.
 Use the **same app registration** as the instance's SSO provider. Entra issues
 a different user identifier to each app registration, and your instance matches
 users on that identifier first: with a separate registration, users would only
-be found by their email address.
+be found by their email address. If the instance does not sign in with Entra
+ID, use the app registration of the provider you add for the add-in
+([below](#if-your-instance-does-not-sign-in-with-entra-id)).
 
 1. In the [Microsoft Entra admin center](https://entra.microsoft.com), open
    **App registrations** and select the application used by Prisme.ai SSO.
@@ -310,8 +318,10 @@ be found by their email address.
 
    They must be of type **Single-page application**, not **Web**.
 
-3. Under **API permissions**, confirm the Microsoft Graph delegated permission
-   **User.Read** is present and grant admin consent, so users are not prompted.
+3. Under **API permissions**, confirm the Microsoft Graph delegated permissions
+   **User.Read**, **openid** and **profile** are present, and grant admin
+   consent. Without it, users are prompted, or blocked with "Need admin
+   approval" in tenants where users cannot consent themselves.
 4. Under **Token configuration**, add the optional **ID** token claims
    `email`, `given_name` and `family_name` if they are not there yet. Your
    instance reads the user's email and name from the ID token.
@@ -341,6 +351,52 @@ SSO), or in the api-gateway's `authProviders.config.yml`, under the provider's
 See [Token Exchange](https://docs.prisme.ai/self-hosting/entreprise/authentication#token-exchange-headless-clients)
 in the Prisme.ai documentation.
 
+#### If your instance does not sign in with Entra ID
+
+Office only ever gives the add-in an **Entra ID** token, and the instance checks
+it against the provider named in the manifest. If that provider is another
+identity provider, for example a corporate one, even one that federates Entra ID
+behind it, the check cannot succeed: the token is not signed by that provider.
+Add a second OIDC provider that points at Entra ID, used by the add-in. Users
+keep signing in to the instance as they do today.
+
+```yaml
+providers:
+  <existing-provider>:
+    # … unchanged
+  entra-addin:                     # any slug: it is the one passed to --sso-provider
+    name: Microsoft                # label of its button on the sign-in page
+    type: oidc
+    config:
+      client_id: "<application-client-id>"
+      authorization_endpoint: "https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/authorize"
+      token_endpoint: "https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token"
+      jwks_uri: "https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
+      issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+      allowTokenExchange: true
+    attributesMapping:
+      email: preferred_username
+```
+
+- **Accounts.** The first time a user connects from the add-in, the instance
+  looks for an account with the same email and links their Entra ID identity
+  to it, so they find their conversations and organizations. Without an
+  `email` claim in the ID token (Step 1), `attributesMapping` takes the email
+  from `preferred_username`, the user's Entra sign-in name. Check on one user
+  that it equals the email of their account on the instance: otherwise every
+  user gets a new, empty account. If it differs, add the `email` optional claim
+  (Step 1) and remove `attributesMapping`.
+- **New users.** A provider in `authProviders.config.yml` adds no one to an
+  organization. If users without an account yet must join one, declare this
+  provider in AI Governance → SSO instead.
+- **Sign-in page.** Every enabled provider without `domains` is shown as a
+  button on the sign-in page, so this one is too. For that button to work,
+  add the **Web** redirect URI `https://api.your-company.com/v2/login/callback`
+  to the app registration and a `client_secret` to the provider. The add-in
+  itself needs neither. Do not give this provider `domains` that match your
+  users' email domains: users who type their email on the sign-in page would
+  be sent to it instead of the usual provider.
+
 **3. API gateway — allow the task pane host to call the API**
 
 The exchange is called from the task pane, so its origin must be allowed by
@@ -350,6 +406,13 @@ of the **api-gateway** service (comma-separated), then restart the service:
 ```
 CORS_ADDITIONAL_ALLOWED_ORIGINS=https://office.your-company.com
 ```
+
+The api-gateway also calls `https://login.microsoftonline.com` to download
+Entra ID's signing keys (and, for browser sign-in through the provider, to
+redeem the sign-in code). If it reaches the internet through a proxy, set
+`HTTPS_PROXY` on the api-gateway, with the internal hosts it must reach
+directly in `NO_PROXY`. A proxy that only serves internal resources is not
+enough: it must also forward `login.microsoftonline.com`.
 
 **4. Generate the manifests with the SSO options**
 
@@ -373,6 +436,12 @@ Deploy to yourself first, using the same procedure as
 [Step 5](#step-5--deploy-to-the-organization) with only your own account as the
 audience. Then run the checks in [Step 6](#step-6--verify) in each application
 your users rely on, on desktop and on the web.
+
+The manifests always carry the same add-in ID. If the add-in is already
+deployed, uploading another manifest in **Integrated apps** replaces it for
+every user it is assigned to. To pilot a different setup next to it (another
+host or instance, for example), give the generated manifest a new `<Id>` (any
+new GUID) and a different `--name`.
 
 To try a manifest without an admin deployment, sideload it yourself. The
 procedure below uses Office on the web, which needs nothing installed. The
@@ -525,12 +594,15 @@ for both manifests. See
 | The message is sent and nothing comes back (anonymous) | The instance refused the anonymous session, and this version of the chat does not display the refusal | In the browser developer tools, read the response of the `messages/stream` and `login/anonymous` requests. Most often the task pane host is missing from the organization's allowed domains for anonymous access. |
 | The pane returns to the connection form with "Could not reach the Prisme.ai API" (SSO) | The task pane host is not allowed by the API | Add it to `CORS_ADDITIONAL_ALLOWED_ORIGINS` on the api-gateway and restart it. |
 | "The Prisme.ai instance refused the sign-in" (SSO) | Token exchange not enabled, wrong provider slug, or issuer mismatch | Check **Allow Token Exchange**, the slug, and that the provider's issuer is exactly `https://login.microsoftonline.com/<tenant-id>/v2.0`. |
+| | "Invalid subject_token": the instance could not verify the Microsoft ID token | The api-gateway log gives the reason: see [Single sign-on refused: read the api-gateway log](#single-sign-on-refused-read-the-api-gateway-log). |
 | | The ID token comes from another app registration | Use the client ID of the app registration configured on the SSO provider. |
 | "This version of Office does not support single sign-on" | Office build without Nested App Authentication | Update Office, or use Office on the web. |
 | Microsoft shows an error about the redirect URI or the application (SSO) | The `brk-multihub://` or `auth-redirect.html` redirect URI is missing, does not match the task pane host, or is declared under **Web** | Fix the Single-page application redirect URIs on the app registration. |
 | "Error opening popup window" (SSO, Office on the web) | The browser blocks the sign-in windows | Allow pop-ups for the Office site and the task pane host, then click **Connect** again. |
+| "interaction_in_progress" (SSO) | An earlier sign-in did not finish: a window was closed or blocked, the pane was reloaded during the sign-in, or **Connect** was clicked again while a sign-in was open. Reloading the pane does not clear it. | Close the browser tab of the document (Office on the web) or quit the Office application (desktop), open the document again, and click **Connect** once. |
 | "Office.js did not load" (SSO) | `appsforoffice.microsoft.com` is blocked by a proxy or firewall | Open `https://appsforoffice.microsoft.com/lib/1/hosted/office.js` on the same device and allow it. |
 | Users are signed in but appear as new, empty accounts (SSO) | The client ID belongs to a different app registration than the SSO provider's, or the ID token has no `email` claim | Use the provider's app registration and add the optional claims. |
+| | With a provider for the add-in, the email it reads differs from the email of the users' accounts | Compare `preferred_username` (or `email`) in a user's ID token with their account's email, and adjust `attributesMapping` ([If your instance does not sign in with Entra ID](#if-your-instance-does-not-sign-in-with-entra-id)). |
 | The connection form appears although the manifest was configured | The manifest was generated without `--agent` | Regenerate with the instance options and a higher `--version`. |
 | The agent does not know the document | Empty document, or content not loaded yet | Click in the document, then ask again. Context is refreshed when the selection changes. |
 | The agent answers about the previous email | The pane is not pinned (Outlook) | Pin the pane so it follows the selected message. |
@@ -546,6 +618,35 @@ for both manifests. See
 On Windows, the pane runs in Microsoft Edge WebView2; on Mac, in Safari's
 WebKit. On a device where WebView2 is managed by Windows Information Protection,
 `msedgewebview2.exe` must be on the protected apps list.
+
+### Single sign-on refused: read the api-gateway log
+
+When the instance refuses the sign-in, the pane only shows "Invalid
+subject_token". The reason is in the api-gateway log, in the warning just
+before the `POST /v2/login/token-exchange` request answered `401`:
+
+```bash
+kubectl logs deploy/prismeai-api-gateway --since=10m | grep -E "Could not verify JWT|JWKS"
+```
+
+| Warning | Cause | What to do |
+|---|---|---|
+| `Could not verify JWT` with `jwt audience invalid` | The ID token was issued for another app registration than the provider's `client_id` | Use the provider's client ID in `--sso-client-id`, or the other way round. |
+| `Could not verify JWT` with `jwt issuer invalid` | The provider's `issuer` is not exactly the token's | Set `https://login.microsoftonline.com/<tenant-id>/v2.0`: tenant ID rather than domain name, `v2.0`, no trailing `/`. |
+| `Could not verify JWT` with `jwt expired` or `jwt not active` | The api-gateway server's clock is wrong | Synchronize its clock. |
+| `does not have specified kid`, alone | The provider is not Entra ID, or its `jwks_uri` points at another tenant | Add a provider for the add-in ([If your instance does not sign in with Entra ID](#if-your-instance-does-not-sign-in-with-entra-id)), or fix `jwks_uri`. |
+| `Error raised while loading IdP JWKS`, followed by `does not have specified kid` | The api-gateway cannot reach `login.microsoftonline.com` | Allow it, directly or through the proxy ([Step 3 of single sign-on](#optional--single-sign-on)). |
+| `Error raised while loading IdP JWKS` with `wrong version number` | The api-gateway goes through a proxy that answers in several parts, for example tinyproxy chained to another proxy. The api-gateway's proxy support misreads that answer, while `curl` works. | On the api-gateway, replace `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` with the same variables in lowercase (`http_proxy`, `https_proxy`, `no_proxy`), add `NODE_USE_ENV_PROXY=1` (Node.js 22.21 or later in the image), and restart it. Node.js's own proxy support then reads the answer correctly. If an error remains, it now names the proxy's answer: most often the proxy refuses `login.microsoftonline.com`. |
+
+To read the ID token itself, open the browser developer tools in Office on the
+web, select the `token-exchange` request, and decode its `subject_token` with a
+JWT decoder that runs in the browser, such as `jwt.ms`. Compare `aud` with the
+provider's `client_id` and `iss` with its `issuer`. The token is a credential
+until it expires: do not share it.
+
+The same log shows browser sign-in through the provider failing at
+`/v2/login/callback` with `AADSTS7000218` when the provider has no
+`client_secret`. The add-in does not need one; browser sign-in does.
 
 ## Security and data flow
 
